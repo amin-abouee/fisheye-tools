@@ -1,9 +1,9 @@
 use nalgebra::{Point2, Point3};
 use serde::{Deserialize, Serialize};
-use std::{fs};
+use std::fs;
 use yaml_rust::YamlLoader;
 
-use crate::camera::{CameraModel, Intrinsics, Resolution, CameraModelError, validation};
+use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RadTanModel {
@@ -21,7 +21,11 @@ impl CameraModel for RadTanModel {
         let u: f64 = self.intrinsics.fx * point_3d.x / point_3d.z + self.intrinsics.cx;
         let v: f64 = self.intrinsics.fy * point_3d.y / point_3d.z + self.intrinsics.cy;
 
-        if u < 0.0 || u >= self.resolution.width as f64 || v < 0.0 || v >= self.resolution.height as f64 {
+        if u < 0.0
+            || u >= self.resolution.width as f64
+            || v < 0.0
+            || v >= self.resolution.height as f64
+        {
             return Err(CameraModelError::ProjectionOutsideImage);
         }
 
@@ -29,8 +33,11 @@ impl CameraModel for RadTanModel {
     }
 
     fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError> {
-        
-        if point_2d.x < 0.0 || point_2d.x >= self.resolution.width as f64 || point_2d.y < 0.0 || point_2d.y >= self.resolution.height as f64 {
+        if point_2d.x < 0.0
+            || point_2d.x >= self.resolution.width as f64
+            || point_2d.y < 0.0
+            || point_2d.y >= self.resolution.height as f64
+        {
             return Err(CameraModelError::PointIsOutsideImage);
         }
 
@@ -47,16 +54,114 @@ impl CameraModel for RadTanModel {
 
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
         let contents = fs::read_to_string(path)?;
-        let _docs = YamlLoader::load_from_str(&contents)?;
-        // TODO: Parse YAML and create RadTanModel
-        unimplemented!()
+        let docs = YamlLoader::load_from_str(&contents)?;
+
+        if docs.is_empty() {
+            return Err(CameraModelError::InvalidParams(
+                "Empty YAML document".to_string(),
+            ));
+        }
+
+        let doc = &docs[0];
+
+        let intrinsics = doc["cam0"]["intrinsics"]
+            .as_vec()
+            .ok_or_else(|| CameraModelError::InvalidParams("Invalid intrinsics".to_string()))?;
+        let resolution = doc["cam0"]["resolution"]
+            .as_vec()
+            .ok_or_else(|| CameraModelError::InvalidParams("Invalid resolution".to_string()))?;
+
+        // Extract distortion parameters
+        let distortion_node = doc["cam0"]["distortion"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams("Missing distortion parameters".to_string())
+        })?;
+
+        let intrinsics = Intrinsics {
+            fx: intrinsics[0]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx".to_string()))?,
+            fy: intrinsics[1]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy".to_string()))?,
+            cx: intrinsics[2]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx".to_string()))?,
+            cy: intrinsics[3]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy".to_string()))?,
+        };
+
+        let resolution = Resolution {
+            width: resolution[0]
+                .as_i64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width".to_string()))?
+                as u32,
+            height: resolution[1]
+                .as_i64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height".to_string()))?
+                as u32,
+        };
+
+        let mut distortion = Vec::with_capacity(5);
+
+        for param in distortion_node {
+            let value = param.as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid distortion parameter".to_string())
+            })?;
+            distortion.push(value);
+        }
+
+        if distortion.len() != 5 {
+            return Err(CameraModelError::InvalidParams(format!(
+                "Expected 5 distortion parameters, got {}",
+                distortion.len()
+            )));
+        }
+
+        let model = RadTanModel {
+            intrinsics,
+            resolution,
+            distortion,
+        };
+
+        // Validate parameters
+        model.validate_params()?;
+
+        Ok(model)
     }
 
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
         if self.distortion.len() != 5 {
-            return Err(CameraModelError::InvalidParams("RadTan model requires 5 distortion parameters".to_string()));
+            return Err(CameraModelError::InvalidParams(
+                "RadTan model requires 5 distortion parameters".to_string(),
+            ));
         }
         Ok(())
+    }
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_from_yaml() {
+        let path = "src/rad_tan/radtan.yaml";
+        let model = RadTanModel::load_from_yaml(path).unwrap();
+
+        assert_eq!(model.intrinsics.fx, 461.629);
+        assert_eq!(model.intrinsics.fy, 460.152);
+        assert_eq!(model.intrinsics.cx, 362.680);
+        assert_eq!(model.intrinsics.cy, 246.049);
+        assert_eq!(model.resolution.width, 752);
+        assert_eq!(model.resolution.height, 480);
+
+        // Check distortion parameters
+        assert_eq!(model.distortion.len(), 5);
+        assert_eq!(model.distortion[0], -0.28340811);
+        assert_eq!(model.distortion[1], 0.07395907);
+        assert_eq!(model.distortion[2], 0.00019359);
+        assert_eq!(model.distortion[3], 1.76187114e-05);
+        assert_eq!(model.distortion[4], 0.0);
     }
 }

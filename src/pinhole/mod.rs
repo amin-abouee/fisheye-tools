@@ -1,9 +1,9 @@
 use nalgebra::{Point2, Point3};
 use serde::{Deserialize, Serialize};
-use std::{fs};
+use std::fs;
 use yaml_rust::YamlLoader;
 
-use crate::camera::{CameraModel, Intrinsics, Resolution, CameraModelError, validation};
+use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PinholeModel {
@@ -22,7 +22,11 @@ impl CameraModel for PinholeModel {
 
         println!("u: {}, v: {}", u, v);
 
-        if u < 0.0 || u >= self.resolution.width as f64 || v < 0.0 || v >= self.resolution.height as f64 {
+        if u < 0.0
+            || u >= self.resolution.width as f64
+            || v < 0.0
+            || v >= self.resolution.height as f64
+        {
             return Err(CameraModelError::ProjectionOutsideImage);
         }
 
@@ -30,8 +34,11 @@ impl CameraModel for PinholeModel {
     }
 
     fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError> {
-        
-        if point_2d.x < 0.0 || point_2d.x >= self.resolution.width as f64 || point_2d.y < 0.0 || point_2d.y >= self.resolution.height as f64 {
+        if point_2d.x < 0.0
+            || point_2d.x >= self.resolution.width as f64
+            || point_2d.y < 0.0
+            || point_2d.y >= self.resolution.height as f64
+        {
             return Err(CameraModelError::PointIsOutsideImage);
         }
 
@@ -51,25 +58,48 @@ impl CameraModel for PinholeModel {
         let docs = YamlLoader::load_from_str(&contents)?;
         let doc = &docs[0];
 
-        let intrinsics = doc["cam0"]["intrinsics"].as_vec().ok_or_else(|| CameraModelError::InvalidParams("Invalid intrinsics".to_string()))?;
-        let resolution = doc["cam0"]["resolution"].as_vec().ok_or_else(|| CameraModelError::InvalidParams("Invalid resolution".to_string()))?;
+        let intrinsics = doc["cam0"]["intrinsics"]
+            .as_vec()
+            .ok_or_else(|| CameraModelError::InvalidParams("Invalid intrinsics".to_string()))?;
+        let resolution = doc["cam0"]["resolution"]
+            .as_vec()
+            .ok_or_else(|| CameraModelError::InvalidParams("Invalid resolution".to_string()))?;
 
         let intrinsics = Intrinsics {
-            fx: intrinsics[0].as_f64().ok_or_else(|| CameraModelError::InvalidParams("Invalid fx".to_string()))?,
-            fy: intrinsics[1].as_f64().ok_or_else(|| CameraModelError::InvalidParams("Invalid fy".to_string()))?,
-            cx: intrinsics[2].as_f64().ok_or_else(|| CameraModelError::InvalidParams("Invalid cx".to_string()))?,
-            cy: intrinsics[3].as_f64().ok_or_else(|| CameraModelError::InvalidParams("Invalid cy".to_string()))?,
+            fx: intrinsics[0]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx".to_string()))?,
+            fy: intrinsics[1]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy".to_string()))?,
+            cx: intrinsics[2]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx".to_string()))?,
+            cy: intrinsics[3]
+                .as_f64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy".to_string()))?,
         };
 
         let resolution = Resolution {
-            width: resolution[0].as_i64().ok_or_else(|| CameraModelError::InvalidParams("Invalid width".to_string()))? as u32,
-            height: resolution[1].as_i64().ok_or_else(|| CameraModelError::InvalidParams("Invalid height".to_string()))? as u32,
+            width: resolution[0]
+                .as_i64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width".to_string()))?
+                as u32,
+            height: resolution[1]
+                .as_i64()
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height".to_string()))?
+                as u32,
         };
 
-        Ok(PinholeModel {
+        let model = PinholeModel {
             intrinsics,
             resolution,
-        })
+        };
+
+        // Validate parameters
+        model.validate_params()?;
+
+        Ok(model)
     }
 
     fn validate_params(&self) -> Result<(), CameraModelError> {
