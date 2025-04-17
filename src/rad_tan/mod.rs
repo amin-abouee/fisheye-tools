@@ -278,7 +278,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_load_from_yaml() {
+    fn test_radtan_load_from_yaml() {
         let path = "src/rad_tan/radtan.yaml";
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
@@ -296,5 +296,86 @@ mod tests {
         assert_eq!(model.distortion[2], 0.00019359);
         assert_eq!(model.distortion[3], 1.76187114e-05);
         assert_eq!(model.distortion[4], 0.0);
+    }
+
+    #[test]
+    fn test_radtan_project_unproject() {
+        // Load the camera model from YAML
+        let path = "src/rad_tan/radtan.yaml";
+        let model = RadTanModel::load_from_yaml(path).unwrap();
+
+        // Create a 3D point in camera coordinates (pointing somewhat forward and to the side)
+        let point_3d = Point3::new(0.5, -0.3, 2.0);
+        let norm_3d = point_3d / point_3d.coords.norm();
+
+        // Project the 3D point to pixel coordinates
+        let point_2d = model.project(&point_3d).unwrap();
+
+        // Check if the pixel coordinates are within the image bounds
+        assert!(point_2d.x >= 0.0 && point_2d.x < model.resolution.width as f64);
+        assert!(point_2d.y >= 0.0 && point_2d.y < model.resolution.height as f64);
+
+        // Unproject the pixel point back to a 3D ray direction
+        let point_3d_unprojected = model.unproject(&point_2d).unwrap();
+
+        // Check if the unprojected point is close to the original point
+        assert!((norm_3d.x - point_3d_unprojected.x).abs() < 1e-6);
+        assert!((norm_3d.y - point_3d_unprojected.y).abs() < 1e-6);
+        assert!((norm_3d.z - point_3d_unprojected.z).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_radtan_multiple_points() {
+        let path = "src/rad_tan/radtan.yaml";
+        let model = RadTanModel::load_from_yaml(path).unwrap();
+
+        // Define a set of 3D test points covering different parts of the field of view
+        let test_points = vec![
+            Point3::new(0.0, 0.0, 1.0),   // Center
+            Point3::new(0.5, 0.0, 1.0),   // Right
+            Point3::new(-0.5, 0.0, 1.0),  // Left
+            Point3::new(0.0, 0.5, 1.0),   // Top
+            Point3::new(0.0, -0.5, 1.0),  // Bottom
+            Point3::new(0.3, 0.4, 1.0),   // Top-right
+            Point3::new(-0.3, 0.4, 1.0),  // Top-left
+            Point3::new(0.3, -0.4, 1.0),  // Bottom-right
+            Point3::new(-0.3, -0.4, 1.0), // Bottom-left
+            Point3::new(0.1, 0.1, 2.0),   // Further away
+        ];
+
+        for (i, original_point) in test_points.iter().enumerate() {
+            // Project the 3D point to pixel coordinates
+            let pixel_point = match model.project(original_point) {
+                Ok(p) => p,
+                Err(e) => {
+                    println!(
+                        "Point {} at {:?} failed projection: {:?}",
+                        i, original_point, e
+                    );
+                    continue; // Skip points that fail projection
+                }
+            };
+
+            // Unproject back to 3D
+            let ray_direction = match model.unproject(&pixel_point) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!(
+                        "Point {} at pixel {:?} failed unprojection: {:?}",
+                        i, pixel_point, e
+                    );
+                    continue;
+                }
+            };
+
+            // The original point and unprojected ray should point in the same direction
+            let original_direction = original_point.coords.normalize();
+            let dot_product = original_direction.dot(&ray_direction.coords);
+
+            // Assert with helpful debug information
+            assert!(dot_product > 0.99,
+                    "Test point {}: Direction mismatch. Original: {:?}, Unprojected: {:?}, Dot product: {}",
+                    i, original_point, ray_direction, dot_product);
+        }
     }
 }

@@ -111,7 +111,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_load_from_yaml() {
+    fn test_pinhole_load_from_yaml() {
         let path = "src/pinhole/pinhole.yaml";
         let model = PinholeModel::load_from_yaml(path).unwrap();
 
@@ -124,23 +124,19 @@ mod tests {
     }
 
     #[test]
-    fn test_project_unproject() {
+    fn test_pinhole_project_unproject() {
         let path = "src/pinhole/pinhole.yaml";
         let model = PinholeModel::load_from_yaml(path).unwrap();
 
         // 3D point in camera coordinates
         let point_3d = Point3::new(1.0, 1.0, 5.0);
         let norm_3d = point_3d / point_3d.coords.norm();
-        println!("Original point: {:?}", point_3d);
-        println!("Original point norm: {:?}", norm_3d);
 
         // Project the 3D point to 2D
         let point_2d = model.project(&point_3d).unwrap();
-        println!("Projected point: {:?}", point_2d);
 
         // Unproject the 2D point back to 3D
         let point_3d_unprojected = model.unproject(&point_2d).unwrap();
-        println!("Unprojected point: {:?}", point_3d_unprojected);
 
         // Check if the unprojected point is close to the original point
         assert!((norm_3d.x - point_3d_unprojected.x).abs() < 1e-6);
