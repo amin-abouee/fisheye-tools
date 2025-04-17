@@ -274,6 +274,7 @@ impl CameraModel for RadTanModel {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
