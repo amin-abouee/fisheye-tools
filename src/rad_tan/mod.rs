@@ -1,4 +1,4 @@
-use nalgebra::{Point2, Point3};
+use nalgebra::{Matrix2, Point2, Point3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use yaml_rust::YamlLoader;
@@ -70,15 +70,119 @@ impl CameraModel for RadTanModel {
             return Err(CameraModelError::PointIsOutSideImage);
         }
 
-        let mx: f64 = (point_2d.x - self.intrinsics.cx) / self.intrinsics.fx;
-        let my: f64 = (point_2d.y - self.intrinsics.cy) / self.intrinsics.fy;
+        let u = point_2d.x;
+        let v = point_2d.y;
+        let fx = self.intrinsics.fx;
+        let fy = self.intrinsics.fy;
+        let cx = self.intrinsics.cx;
+        let cy = self.intrinsics.cy;
 
-        let r2: f64 = mx * mx + my * my;
+        let k1 = self.distortion[0];
+        let k2 = self.distortion[1];
+        let p1 = self.distortion[2];
+        let p2 = self.distortion[3];
+        let k3 = self.distortion[4];
 
-        let norm: f64 = (1.0 as f64 + r2).sqrt();
-        let norm_inv: f64 = 1.0 as f64 / norm;
+        // Calculate normalized coordinates of the distorted point
+        // This is the target point in the normalized image plane we want to match
+        let x_distorted = (u - cx) / fx;
+        let y_distorted = (v - cy) / fy;
+        let target_distorted_point = Point2::new(x_distorted, y_distorted);
 
-        Ok(Point3::new(mx * norm_inv, my * norm_inv, norm_inv))
+        // Initial guess for the undistorted normalized point (start with the distorted point)
+        let mut point = target_distorted_point;
+
+        // Tolerance for convergence checks
+        const EPS: f64 = 1e-6;
+        const MAX_ITERATIONS: u32 = 100; // Add max iterations to prevent infinite loops
+
+        for iteration in 0..MAX_ITERATIONS {
+            let x = point.x;
+            let y = point.y;
+            let r2 = x * x + y * y; // r^2
+            let r4 = r2 * r2; // r^4
+            let r6 = r4 * r2; // r^6
+
+            // Calculate the radial distortion factor
+            let radial_distortion = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+
+            // Estimate the distorted position based on the current undistorted estimate `point`
+            // and the distortion model (radial + tangential)
+            let x_distorted_estimate =
+                x * radial_distortion + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
+            let y_distorted_estimate =
+                y * radial_distortion + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
+            let estimated_distorted_point = Point2::new(x_distorted_estimate, y_distorted_estimate);
+
+            // Calculate the error: difference between the estimated distorted point
+            // and the actual target distorted point
+            let error = estimated_distorted_point - target_distorted_point;
+
+            // Check for convergence based on the error norm
+            if error.norm() < EPS {
+                break; // Converged
+            }
+
+            // Calculate the Jacobian matrix (J) of the distortion function
+            // with respect to the undistorted point (x, y)
+            let term1 = k1 + 2.0 * k2 * r2 + 3.0 * k3 * r4; // Derivative of (r*radial_distortion) w.r.t r, divided by r
+                                                            // Re-deriving based on the distortion estimate formulas:
+                                                            // d(x_est)/dx = radial_distortion + x * d(radial_distortion)/dx + d(tangential_x)/dx
+                                                            // d(x_est)/dy = x * d(radial_distortion)/dy + d(tangential_x)/dy
+                                                            // etc.
+                                                            // d(r^2)/dx = 2x, d(r^2)/dy = 2y
+                                                            // d(radial_distortion)/dx = (k1 + 2*k2*r2 + 3*k3*r4) * 2x
+                                                            // d(radial_distortion)/dy = (k1 + 2*k2*r2 + 3*k3*r4) * 2y
+
+            // Jacobian elements (derivatives of estimated distorted coords w.r.t. undistorted coords)
+            let j00 =
+                radial_distortion + x * (term1 * 2.0 * x) + 2.0 * p1 * y + p2 * (2.0 * x + 4.0 * x); // d(x_est)/dx
+            let j01 = x * (term1 * 2.0 * y) + 2.0 * p1 * x + p2 * (2.0 * y); // d(x_est)/dy
+            let j10 = y * (term1 * 2.0 * x) + p1 * (2.0 * x) + 2.0 * p2 * y; // d(y_est)/dx
+            let j11 =
+                radial_distortion + y * (term1 * 2.0 * y) + p1 * (2.0 * y + 4.0 * y) + 2.0 * p2 * x; // d(y_est)/dy
+
+            // Construct the Jacobian matrix
+            let jacobian = Matrix2::new(j00, j01, j10, j11);
+
+            // Solve for the update step (delta) using the inverse of the Jacobian
+            // J * delta = -error  => delta = -J.inverse() * error (or solve directly)
+            if let Some(inv_jacobian) = jacobian.try_inverse() {
+                let delta = inv_jacobian * error;
+
+                // Update the undistorted point estimate
+                point -= delta; // Apply the correction
+
+                // Check for convergence based on the step size norm
+                if delta.norm() < EPS {
+                    break; // Converged
+                }
+            } else {
+                // Jacobian is not invertible, cannot proceed
+                // This might happen if distortion is extreme or point is near singularity
+                return Err(CameraModelError::NumericalError(
+                    "Jacobian is singular".to_string(),
+                ));
+            }
+
+            // If loop finished without converging (max iterations reached)
+            if iteration == MAX_ITERATIONS - 1 {
+                return Err(CameraModelError::NumericalError(
+                    "Unprojection did not converge after {MAX_ITERATIONS} iterations.".to_string(),
+                ));
+            }
+        }
+
+        // Create the 3D point with the undistorted x, y and z=1
+        let mut point3d = Point3::new(point.x, point.y, 1.0);
+
+        // Normalize the point to get a unit vector
+        let norm = point3d.coords.norm();
+        point3d.x /= norm;
+        point3d.y /= norm;
+        point3d.z /= norm;
+
+        Ok(point3d)
     }
 
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {

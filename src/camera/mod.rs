@@ -33,6 +33,8 @@ pub enum CameraModelError {
     YamlError(String),
     #[error("IO Error: {0}")]
     IOError(String),
+    #[error("NumericalError: {0}")]
+    NumericalError(String),
 }
 
 impl From<std::io::Error> for CameraModelError {
