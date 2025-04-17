@@ -18,9 +18,9 @@ pub struct Resolution {
 #[derive(thiserror::Error, Debug)]
 pub enum CameraModelError {
     #[error("Projection is outside the image")]
-    ProjectionOutsideImage,
+    ProjectionOutSideImage,
     #[error("Input point is outside the image")]
-    PointIsOutsideImage,
+    PointIsOutSideImage,
     #[error("z is close to zero, point is at camera center")]
     PointAtCameraCenter,
     #[error("Focal length must be positive")]
@@ -51,13 +51,15 @@ impl From<yaml_rust::ScanError> for CameraModelError {
 pub trait CameraModel {
     /// Project a 3D point to 2D image coordinates
     fn project(&self, point_3d: &Point3<f64>) -> Result<Point2<f64>, CameraModelError>;
-    
+
     /// Unproject 2D image coordinates to a 3D ray
     fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError>;
-    
+
     /// Load camera parameters from a YAML file
-    fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> where Self: Sized;
-    
+    fn load_from_yaml(path: &str) -> Result<Self, CameraModelError>
+    where
+        Self: Sized;
+
     /// Validate camera parameters
     fn validate_params(&self) -> Result<(), CameraModelError>;
 }
@@ -75,4 +77,4 @@ pub mod validation {
         }
         Ok(())
     }
-} 
+}

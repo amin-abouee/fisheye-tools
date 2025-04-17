@@ -18,15 +18,44 @@ impl CameraModel for RadTanModel {
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
         }
-        let u: f64 = self.intrinsics.fx * point_3d.x / point_3d.z + self.intrinsics.cx;
-        let v: f64 = self.intrinsics.fy * point_3d.y / point_3d.z + self.intrinsics.cy;
 
+        let x = point_3d.x;
+        let y = point_3d.y;
+        let z = point_3d.z;
+
+        let k1 = self.distortion[0];
+        let k2 = self.distortion[1];
+        let p1 = self.distortion[2];
+        let p2 = self.distortion[3];
+        let k3 = self.distortion[4];
+
+        // Calculate normalized image coordinates
+        let x_prime = x / z;
+        let y_prime = y / z;
+
+        let r2 = x_prime.powi(2) + y_prime.powi(2);
+        let r4 = r2.powi(2);
+        let r6 = r4.powi(2);
+
+        // Apply radial and tangential distortion
+        let x_distorted = x_prime * (1.0 + k1 * r2 + k2 * r4 + k3 * r6)
+            + 2.0 * p1 * x_prime * y_prime
+            + p2 * (r2 + 2.0 * x_prime * x_prime);
+
+        let y_distorted = y_prime * (1.0 + k1 * r2 + k2 * r4 + k3 * r6)
+            + p1 * (r2 + 2.0 * y_prime * y_prime)
+            + 2.0 * p2 * x_prime * y_prime;
+
+        let u = self.intrinsics.fx * x_distorted + self.intrinsics.cx;
+        let v = self.intrinsics.fy * y_distorted + self.intrinsics.cy;
+
+        // Check if the projected point is inside the image
         if u < 0.0
             || u >= self.resolution.width as f64
             || v < 0.0
             || v >= self.resolution.height as f64
         {
-            return Err(CameraModelError::ProjectionOutsideImage);
+            return Err(CameraModelError::ProjectionOutSideImage);
         }
 
         Ok(Point2::new(u, v))
@@ -38,7 +67,7 @@ impl CameraModel for RadTanModel {
             || point_2d.y < 0.0
             || point_2d.y >= self.resolution.height as f64
         {
-            return Err(CameraModelError::PointIsOutsideImage);
+            return Err(CameraModelError::PointIsOutSideImage);
         }
 
         let mx: f64 = (point_2d.x - self.intrinsics.cx) / self.intrinsics.fx;

@@ -20,14 +20,12 @@ impl CameraModel for PinholeModel {
         let u: f64 = self.intrinsics.fx * point_3d.x / point_3d.z + self.intrinsics.cx;
         let v: f64 = self.intrinsics.fy * point_3d.y / point_3d.z + self.intrinsics.cy;
 
-        println!("u: {}, v: {}", u, v);
-
         if u < 0.0
             || u >= self.resolution.width as f64
             || v < 0.0
             || v >= self.resolution.height as f64
         {
-            return Err(CameraModelError::ProjectionOutsideImage);
+            return Err(CameraModelError::ProjectionOutSideImage);
         }
 
         Ok(Point2::new(u, v))
@@ -39,7 +37,7 @@ impl CameraModel for PinholeModel {
             || point_2d.y < 0.0
             || point_2d.y >= self.resolution.height as f64
         {
-            return Err(CameraModelError::PointIsOutsideImage);
+            return Err(CameraModelError::PointIsOutSideImage);
         }
 
         let mx: f64 = (point_2d.x - self.intrinsics.cx) / self.intrinsics.fx;
