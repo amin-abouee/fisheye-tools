@@ -1,12 +1,33 @@
-pub mod camera;
+use clap::Parser;
+use std::path::PathBuf; // Use PathBuf for paths
 
+pub mod camera;
 pub mod double_sphere;
 pub mod pinhole;
 pub mod rad_tan;
 // pub mod kannala_brandt;
 
+/// Simple program to demonstrate reading input/output model paths from args
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)] // Adds version, author, about from Cargo.toml
+struct Cli {
+    /// Path to the input model file
+    #[arg(short = 'i', long)] // Defines a required arg: -i <PATH> or --input <PATH>
+    input_model: PathBuf,
+
+    /// Path to the output model file
+    #[arg(short = 'o', long)] // Defines a required arg: -o <PATH> or --output <PATH>
+    output_model: PathBuf,
+}
+
 fn main() {
-    println!("Hello, world!");
+    // Parse the command line arguments into the Cli struct
+    // clap automatically handles errors (e.g., missing args) and --help / --version
+    let cli = Cli::parse();
+
+    // Access the parsed arguments
+    println!("Input Model Path: {:?}", cli.input_model);
+    println!("Output Model Path: {:?}", cli.output_model);
 }
 
 #[cfg(test)]
