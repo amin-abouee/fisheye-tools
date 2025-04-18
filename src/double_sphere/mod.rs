@@ -108,25 +108,25 @@ impl CameraModel for DoubleSphereModel {
             .as_vec()
             .ok_or_else(|| CameraModelError::InvalidParams("Invalid resolution".to_string()))?;
 
-        let xi = intrinsics[0]
+        let xi = intrinsics[4]
             .as_f64()
             .ok_or_else(|| CameraModelError::InvalidParams("Invalid xi".to_string()))?;
 
-        let alpha = intrinsics[1]
+        let alpha = intrinsics[5]
             .as_f64()
             .ok_or_else(|| CameraModelError::InvalidParams("Invalid alpha".to_string()))?;
 
         let intrinsics = Intrinsics {
-            fx: intrinsics[2]
+            fx: intrinsics[0]
                 .as_f64()
                 .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx".to_string()))?,
-            fy: intrinsics[3]
+            fy: intrinsics[1]
                 .as_f64()
                 .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy".to_string()))?,
-            cx: intrinsics[4]
+            cx: intrinsics[2]
                 .as_f64()
                 .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx".to_string()))?,
-            cy: intrinsics[5]
+            cy: intrinsics[3]
                 .as_f64()
                 .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy".to_string()))?,
         };
@@ -174,12 +174,12 @@ mod tests {
         let path = "src/double_sphere/double_sphere.yaml";
         let model = DoubleSphereModel::load_from_yaml(path).unwrap();
 
-        assert_eq!(model.xi, -0.24425190195168348);
-        assert_eq!(model.alpha, 0.5657413673629862);
         assert_eq!(model.intrinsics.fx, 348.112754378549);
         assert_eq!(model.intrinsics.fy, 347.1109973814674);
         assert_eq!(model.intrinsics.cx, 365.8121721753254);
         assert_eq!(model.intrinsics.cy, 249.3555778487899);
+        assert_eq!(model.xi, -0.24425190195168348);
+        assert_eq!(model.alpha, 0.5657413673629862);
         assert_eq!(model.resolution.width, 752);
         assert_eq!(model.resolution.height, 480);
     }
