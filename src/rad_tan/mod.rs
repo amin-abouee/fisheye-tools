@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_radtan_load_from_yaml() {
-        let path = "src/rad_tan/radtan.yaml";
+        let path = "src/rad_tan/rad_tan.yaml";
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
         assert_eq!(model.intrinsics.fx, 461.629);
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn test_radtan_project_unproject() {
         // Load the camera model from YAML
-        let path = "src/rad_tan/radtan.yaml";
+        let path = "src/rad_tan/rad_tan.yaml";
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
         // Create a 3D point in camera coordinates (pointing somewhat forward and to the side)
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_radtan_multiple_points() {
-        let path = "src/rad_tan/radtan.yaml";
+        let path = "src/rad_tan/rad_tan.yaml";
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
         // Define a set of 3D test points covering different parts of the field of view
