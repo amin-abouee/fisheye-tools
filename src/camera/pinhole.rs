@@ -1,6 +1,7 @@
 use nalgebra::{Point2, Point3};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use yaml_rust::YamlLoader;
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
@@ -101,7 +102,45 @@ impl CameraModel for PinholeModel {
     }
 
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
-        // Implementation for saving to YAML
+        // Create the YAML structure using serde_yaml
+        let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
+            serde_yaml::Value::String("cam0".to_string()),
+            serde_yaml::to_value(&serde_yaml::Mapping::from_iter([
+                (
+                    serde_yaml::Value::String("camera_model".to_string()),
+                    serde_yaml::Value::String("pinhole".to_string()),
+                ),
+                (
+                    serde_yaml::Value::String("intrinsics".to_string()),
+                    serde_yaml::to_value(vec![
+                        self.intrinsics.fx,
+                        self.intrinsics.fy,
+                        self.intrinsics.cx,
+                        self.intrinsics.cy,
+                    ])
+                    .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+                ),
+                (
+                    serde_yaml::Value::String("resolution".to_string()),
+                    serde_yaml::to_value(vec![self.resolution.width, self.resolution.height])
+                        .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+                ),
+            ]))
+            .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+        )]))
+        .map_err(|e| CameraModelError::YamlError(e.to_string()))?;
+
+        // Convert to string
+        let yaml_string =
+            serde_yaml::to_string(&yaml).map_err(|e| CameraModelError::YamlError(e.to_string()))?;
+
+        // Write to file
+        let mut file =
+            fs::File::create(path).map_err(|e| CameraModelError::IOError(e.to_string()))?;
+
+        file.write_all(yaml_string.as_bytes())
+            .map_err(|e| CameraModelError::IOError(e.to_string()))?;
+
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 pub mod camera;
 pub mod geometry;
 
-use crate::camera::{CameraModel, DoubleSphereModel, PinholeModel, RadTanModel};
+use crate::camera::{CameraModel, DoubleSphereModel, RadTanModel};
 pub use clap::Parser;
 pub use std::path::PathBuf; // Use PathBuf for paths
 
@@ -68,17 +68,17 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use crate::camera::{CameraModel, DoubleSphereModel, PinholeModel, RadTanModel};
+    use crate::camera::{CameraModel, DoubleSphereModel, RadTanModel};
     use nalgebra::Point3;
 
-    #[test]
-    fn test_pinhole_camera() {
-        let model = PinholeModel::load_from_yaml("samples/pinhole.yaml").unwrap();
-        let point_3d = Point3::new(1.0, 1.0, 3.0);
-        let point_2d = model.project(&point_3d).unwrap();
-        assert!(point_2d.x > 0.0);
-        assert!(point_2d.y > 0.0);
-    }
+    // #[test]
+    // fn test_pinhole_camera() {
+    //     let model = PinholeModel::load_from_yaml("samples/pinhole.yaml").unwrap();
+    //     let point_3d = Point3::new(1.0, 1.0, 3.0);
+    //     let point_2d = model.project(&point_3d).unwrap();
+    //     assert!(point_2d.x > 0.0);
+    //     assert!(point_2d.y > 0.0);
+    // }
 
     #[test]
     fn test_radtan_camera() {

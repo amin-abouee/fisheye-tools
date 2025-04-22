@@ -1,6 +1,7 @@
 use nalgebra::{Matrix2, Matrix2xX, Matrix3xX, Point2, Point3};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use yaml_rust::YamlLoader;
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
@@ -276,7 +277,60 @@ impl CameraModel for RadTanModel {
     }
 
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
-        // Implementation for saving to YAML
+        // Create the YAML structure using serde_yaml
+        let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
+            serde_yaml::Value::String("cam0".to_string()),
+            serde_yaml::to_value(&serde_yaml::Mapping::from_iter([
+                (
+                    serde_yaml::Value::String("camera_model".to_string()),
+                    serde_yaml::Value::String("double_sphere".to_string()),
+                ),
+                (
+                    serde_yaml::Value::String("intrinsics".to_string()),
+                    serde_yaml::to_value(vec![
+                        self.intrinsics.fx,
+                        self.intrinsics.fy,
+                        self.intrinsics.cx,
+                        self.intrinsics.cy,
+                    ])
+                    .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+                ),
+                (
+                    serde_yaml::Value::String("distortion".to_string()),
+                    serde_yaml::to_value(vec![
+                        self.distortion[0],
+                        self.distortion[1],
+                        self.distortion[2],
+                        self.distortion[3],
+                        self.distortion[4],
+                    ])
+                    .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+                ),
+                (
+                    serde_yaml::Value::String("rostopic".to_string()),
+                    serde_yaml::Value::String("/cam0/image_raw".to_string()),
+                ),
+                (
+                    serde_yaml::Value::String("resolution".to_string()),
+                    serde_yaml::to_value(vec![self.resolution.width, self.resolution.height])
+                        .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+                ),
+            ]))
+            .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+        )]))
+        .map_err(|e| CameraModelError::YamlError(e.to_string()))?;
+
+        // Convert to string
+        let yaml_string =
+            serde_yaml::to_string(&yaml).map_err(|e| CameraModelError::YamlError(e.to_string()))?;
+
+        // Write to file
+        let mut file =
+            fs::File::create(path).map_err(|e| CameraModelError::IOError(e.to_string()))?;
+
+        file.write_all(yaml_string.as_bytes())
+            .map_err(|e| CameraModelError::IOError(e.to_string()))?;
+
         Ok(())
     }
 
@@ -302,7 +356,7 @@ impl CameraModel for RadTanModel {
         let model = RadTanModel {
             intrinsics: intrinsics.clone(),
             resolution: resolution.clone(),
-            distortion: [0.0, 0.0, 0.0, 0.0, 0.0],
+            distortion: [0.0; 5],
         };
 
         // Validate parameters
@@ -335,6 +389,43 @@ mod tests {
         assert_eq!(model.distortion[2], 0.00019359);
         assert_eq!(model.distortion[3], 1.76187114e-05);
         assert_eq!(model.distortion[4], 0.0);
+    }
+
+    #[test]
+    fn test_radtan_save_to_yaml() {
+        use std::fs;
+
+        // Create output directory if it doesn't exist
+        fs::create_dir_all("output").unwrap_or_else(|_| {
+            println!("Output directory already exists or couldn't be created");
+        });
+
+        // Define input and output paths
+        let input_path = "samples/rad_tan.yaml";
+        let output_path = "output/rad_tan_saved.yaml";
+
+        // Load the camera model from the original YAML
+        let model = RadTanModel::load_from_yaml(input_path).unwrap();
+
+        // Save the model to the output path
+        model.save_to_yaml(output_path).unwrap();
+
+        // Load the model from the saved file
+        let saved_model = RadTanModel::load_from_yaml(output_path).unwrap();
+
+        // Compare the original and saved models
+        assert_eq!(model.intrinsics.fx, saved_model.intrinsics.fx);
+        assert_eq!(model.intrinsics.fy, saved_model.intrinsics.fy);
+        assert_eq!(model.intrinsics.cx, saved_model.intrinsics.cx);
+        assert_eq!(model.intrinsics.cy, saved_model.intrinsics.cy);
+        assert_eq!(model.resolution.width, saved_model.resolution.width);
+        assert_eq!(model.resolution.height, saved_model.resolution.height);
+        assert_eq!(model.distortion.len(), saved_model.distortion.len());
+        assert_eq!(model.distortion[0], saved_model.distortion[0]);
+        assert_eq!(model.distortion[1], saved_model.distortion[1]);
+        assert_eq!(model.distortion[2], saved_model.distortion[2]);
+        assert_eq!(model.distortion[3], saved_model.distortion[3]);
+        assert_eq!(model.distortion[4], saved_model.distortion[4]);
     }
 
     #[test]
