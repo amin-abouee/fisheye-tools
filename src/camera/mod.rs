@@ -1,4 +1,4 @@
-use nalgebra::{Point2, Point3};
+use nalgebra::{Matrix2xX, Matrix3xX, Point2, Point3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,13 +57,31 @@ pub trait CameraModel {
     /// Unproject 2D image coordinates to a 3D ray
     fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError>;
 
+    /// Initialize the camera model with intrinsics and 2D-3D correspondences
+    fn initialize(
+        intrinsics: &Intrinsics,
+        resolution: &Resolution,
+        points_2d: &Matrix2xX<f64>,
+        points_3d: &Matrix3xX<f64>,
+    ) -> Result<Self, CameraModelError>
+    where
+        Self: Sized;
+
     /// Load camera parameters from a YAML file
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError>
     where
         Self: Sized;
 
+    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError>;
+
     /// Validate camera parameters
     fn validate_params(&self) -> Result<(), CameraModelError>;
+
+    /// Get the resolution of the camera
+    fn get_resolution(&self) -> Resolution;
+
+    /// Get the intrinsic parameters of the camera
+    fn get_intrinsics(&self) -> Intrinsics;
 }
 
 /// Common validation functions for camera parameters
