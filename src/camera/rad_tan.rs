@@ -1,4 +1,4 @@
-use nalgebra::{Matrix2, Point2, Point3};
+use nalgebra::{Matrix2, Matrix2xX, Matrix3xX, Point2, Point3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use yaml_rust::YamlLoader;
@@ -9,7 +9,7 @@ use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resol
 pub struct RadTanModel {
     pub intrinsics: Intrinsics,
     pub resolution: Resolution,
-    pub distortion: Vec<f64>, // k1, k2, p1, p2, k3
+    pub distortion: [f64; 5], // k1, k2, p1, p2, k3
 }
 
 impl CameraModel for RadTanModel {
@@ -235,13 +235,25 @@ impl CameraModel for RadTanModel {
                 as u32,
         };
 
-        let mut distortion = Vec::with_capacity(5);
+        let mut distortion = [0.0; 5]; // Initialize the fixed-size array
 
-        for param in distortion_node {
+        // Ensure the YAML node contains the correct number of parameters
+        if distortion_node.len() != 5 {
+            return Err(CameraModelError::InvalidParams(format!(
+                "Expected 5 distortion parameters in YAML, found {}",
+                distortion_node.len()
+            )));
+        }
+
+        for (i, param) in distortion_node.iter().enumerate() {
             let value = param.as_f64().ok_or_else(|| {
-                CameraModelError::InvalidParams("Invalid distortion parameter".to_string())
+                CameraModelError::InvalidParams(format!(
+                    "Invalid distortion parameter at index {}",
+                    i
+                ))
             })?;
-            distortion.push(value);
+            // Assign the parsed value to the corresponding index in the array
+            distortion[i] = value;
         }
 
         if distortion.len() != 5 {
@@ -263,14 +275,40 @@ impl CameraModel for RadTanModel {
         Ok(model)
     }
 
+    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
+        // Implementation for saving to YAML
+        Ok(())
+    }
+
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
-        if self.distortion.len() != 5 {
-            return Err(CameraModelError::InvalidParams(
-                "RadTan model requires 5 distortion parameters".to_string(),
-            ));
-        }
         Ok(())
+    }
+
+    fn get_resolution(&self) -> Resolution {
+        self.resolution.clone()
+    }
+
+    fn get_intrinsics(&self) -> Intrinsics {
+        self.intrinsics.clone()
+    }
+
+    fn initialize(
+        intrinsics: &Intrinsics,
+        resolution: &Resolution,
+        _points_2d: &Matrix2xX<f64>,
+        _points_3d: &Matrix3xX<f64>,
+    ) -> Result<Self, CameraModelError> {
+        let model = RadTanModel {
+            intrinsics: intrinsics.clone(),
+            resolution: resolution.clone(),
+            distortion: [0.0, 0.0, 0.0, 0.0, 0.0],
+        };
+
+        // Validate parameters
+        model.validate_params()?;
+
+        Ok(model)
     }
 }
 
@@ -280,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_radtan_load_from_yaml() {
-        let path = "src/rad_tan/rad_tan.yaml";
+        let path = "samples/rad_tan.yaml";
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
         assert_eq!(model.intrinsics.fx, 461.629);
@@ -302,7 +340,7 @@ mod tests {
     #[test]
     fn test_radtan_project_unproject() {
         // Load the camera model from YAML
-        let path = "src/rad_tan/rad_tan.yaml";
+        let path = "samples/rad_tan.yaml";
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
         // Create a 3D point in camera coordinates (pointing somewhat forward and to the side)
@@ -327,7 +365,7 @@ mod tests {
 
     #[test]
     fn test_radtan_multiple_points() {
-        let path = "src/rad_tan/rad_tan.yaml";
+        let path = "samples/rad_tan.yaml";
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
         // Define a set of 3D test points covering different parts of the field of view

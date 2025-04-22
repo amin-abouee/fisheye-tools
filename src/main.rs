@@ -1,14 +1,7 @@
 pub mod camera;
-pub mod double_sphere;
 pub mod geometry;
-pub mod pinhole;
-pub mod rad_tan;
-// pub mod kannala_brandt;
 
-use crate::camera::CameraModel;
-use crate::double_sphere::DoubleSphereModel;
-use crate::pinhole::PinholeModel;
-use crate::rad_tan::RadTanModel;
+use crate::camera::{CameraModel, DoubleSphereModel, PinholeModel, RadTanModel};
 pub use clap::Parser;
 pub use std::path::PathBuf; // Use PathBuf for paths
 
@@ -75,15 +68,12 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use crate::camera::CameraModel;
-    use crate::double_sphere::DoubleSphereModel;
-    use crate::pinhole::PinholeModel;
-    use crate::rad_tan::RadTanModel;
+    use crate::camera::{CameraModel, DoubleSphereModel, PinholeModel, RadTanModel};
     use nalgebra::Point3;
 
     #[test]
     fn test_pinhole_camera() {
-        let model = PinholeModel::load_from_yaml("src/pinhole/pinhole.yaml").unwrap();
+        let model = PinholeModel::load_from_yaml("samples/pinhole.yaml").unwrap();
         let point_3d = Point3::new(1.0, 1.0, 3.0);
         let point_2d = model.project(&point_3d).unwrap();
         assert!(point_2d.x > 0.0);
@@ -92,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_radtan_camera() {
-        let model = RadTanModel::load_from_yaml("src/rad_tan/rad_tan.yaml").unwrap();
+        let model = RadTanModel::load_from_yaml("samples/rad_tan.yaml").unwrap();
         let point_3d = Point3::new(1.0, 1.0, 3.0);
         let point_2d = model.project(&point_3d).unwrap();
         assert!(point_2d.x > 0.0);
@@ -101,8 +91,7 @@ mod tests {
 
     #[test]
     fn test_double_sphere_camera() {
-        let model =
-            DoubleSphereModel::load_from_yaml("src/double_sphere/double_sphere.yaml").unwrap();
+        let model = DoubleSphereModel::load_from_yaml("samples/double_sphere.yaml").unwrap();
         let point_3d = Point3::new(1.0, 1.0, 3.0);
         let point_2d = model.project(&point_3d).unwrap();
         assert!(point_2d.x > 0.0);

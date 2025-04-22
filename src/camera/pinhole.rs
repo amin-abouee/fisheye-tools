@@ -100,9 +100,39 @@ impl CameraModel for PinholeModel {
         Ok(model)
     }
 
+    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
+        // Implementation for saving to YAML
+        Ok(())
+    }
+
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
         Ok(())
+    }
+
+    fn get_resolution(&self) -> Resolution {
+        self.resolution.clone()
+    }
+
+    fn get_intrinsics(&self) -> Intrinsics {
+        self.intrinsics.clone()
+    }
+
+    fn initialize(
+        intrinsics: &Intrinsics,
+        resolution: &Resolution,
+        _points_2d: &nalgebra::Matrix2xX<f64>,
+        _points_3d: &nalgebra::Matrix3xX<f64>,
+    ) -> Result<Self, CameraModelError> {
+        let model = PinholeModel {
+            intrinsics: intrinsics.clone(),
+            resolution: resolution.clone(),
+        };
+
+        // Validate parameters
+        model.validate_params()?;
+
+        Ok(model)
     }
 }
 
@@ -112,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_pinhole_load_from_yaml() {
-        let path = "src/pinhole/pinhole.yaml";
+        let path = "samples/pinhole.yaml";
         let model = PinholeModel::load_from_yaml(path).unwrap();
 
         assert_eq!(model.intrinsics.fx, 461.629);
@@ -125,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_pinhole_project_unproject() {
-        let path = "src/pinhole/pinhole.yaml";
+        let path = "samples/pinhole.yaml";
         let model = PinholeModel::load_from_yaml(path).unwrap();
 
         // 3D point in camera coordinates

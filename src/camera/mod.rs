@@ -1,6 +1,18 @@
 use nalgebra::{Matrix2xX, Matrix3xX, Point2, Point3};
 use serde::{Deserialize, Serialize};
 
+// Camera model modules
+mod double_sphere;
+mod kannala_brandt;
+mod pinhole;
+mod rad_tan;
+
+// Re-export camera models
+pub use double_sphere::DoubleSphereModel;
+pub use kannala_brandt::KannalaBrandtModel;
+pub use pinhole::PinholeModel;
+pub use rad_tan::RadTanModel;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Intrinsics {
     pub fx: f64,

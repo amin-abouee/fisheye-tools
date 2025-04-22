@@ -1,4 +1,4 @@
-use nalgebra::{Point2, Point3};
+use nalgebra::{Matrix2xX, Matrix3xX, Point2, Point3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use yaml_rust::YamlLoader;
@@ -154,14 +154,54 @@ impl CameraModel for DoubleSphereModel {
         Ok(model)
     }
 
+    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
+        // Implementation for saving to YAML
+        Ok(())
+    }
+
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
-        if !self.xi.is_finite() || !self.alpha.is_finite() {
+
+        if !self.xi.is_finite() {
             return Err(CameraModelError::InvalidParams(
-                "xi and alpha must be finite".to_string(),
+                "xi must be finite".to_string(),
             ));
         }
+
+        if self.alpha <= 0.0 || self.alpha > 1.0 {
+            return Err(CameraModelError::InvalidParams(
+                "alpha must be in (0, 1]".to_string(),
+            ));
+        }
+
         Ok(())
+    }
+
+    fn get_resolution(&self) -> Resolution {
+        self.resolution.clone()
+    }
+
+    fn get_intrinsics(&self) -> Intrinsics {
+        self.intrinsics.clone()
+    }
+
+    fn initialize(
+        intrinsics: &Intrinsics,
+        resolution: &Resolution,
+        _points_2d: &Matrix2xX<f64>,
+        _points_3d: &Matrix3xX<f64>,
+    ) -> Result<Self, CameraModelError> {
+        let model = DoubleSphereModel {
+            intrinsics: intrinsics.clone(),
+            resolution: resolution.clone(),
+            xi: 0.0,
+            alpha: 1.0,
+        };
+
+        // Validate parameters
+        model.validate_params()?;
+
+        Ok(model)
     }
 }
 
@@ -171,7 +211,7 @@ mod tests {
 
     #[test]
     fn test_double_sphere_load_from_yaml() {
-        let path = "src/double_sphere/double_sphere.yaml";
+        let path = "samples/double_sphere.yaml";
         let model = DoubleSphereModel::load_from_yaml(path).unwrap();
 
         assert_eq!(model.intrinsics.fx, 348.112754378549);
@@ -187,7 +227,7 @@ mod tests {
     #[test]
     fn test_double_sphere_project_unproject() {
         // Load the camera model from YAML
-        let path = "src/double_sphere/double_sphere.yaml";
+        let path = "samples/double_sphere.yaml";
         let model = DoubleSphereModel::load_from_yaml(path).unwrap();
 
         // Create a 3D point in camera coordinates (pointing somewhat forward and to the side)
