@@ -233,14 +233,59 @@ impl CameraModel for DoubleSphereModel {
     fn initialize(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
-        _points_2d: &Matrix2xX<f64>,
-        _points_3d: &Matrix3xX<f64>,
+        points_2d: &Matrix2xX<f64>,
+        points_3d: &Matrix3xX<f64>,
     ) -> Result<Self, CameraModelError> {
+        // Check if the number of 2D and 3D points match
+        if points_2d.ncols() != points_3d.ncols() {
+            return Err(CameraModelError::InvalidParams(
+                "Number of 2D and 3D points must match".to_string(),
+            ));
+        }
+
+        // Initialize with xi = 0.0
+        let xi = 0.0;
+
+        // Set up the linear system to solve for alpha
+        let num_points = points_2d.ncols();
+        let mut a = nalgebra::DMatrix::zeros(num_points * 2, 1);
+        let mut b = nalgebra::DVector::zeros(num_points * 2);
+
+        for i in 0..num_points {
+            let x = points_3d[(0, i)];
+            let y = points_3d[(1, i)];
+            let z = points_3d[(2, i)];
+            let u = points_2d[(0, i)];
+            let v = points_2d[(1, i)];
+
+            let d = (x * x + y * y + z * z).sqrt();
+            let u_cx = u - intrinsics.cx;
+            let v_cy = v - intrinsics.cy;
+
+            a[(i * 2, 0)] = u_cx * (d - z);
+            a[(i * 2 + 1, 0)] = v_cy * (d - z);
+
+            b[i * 2] = (intrinsics.fx * x) - (u_cx * z);
+            b[i * 2 + 1] = (intrinsics.fy * y) - (v_cy * z);
+        }
+
+        // Solve the linear system using SVD
+        let svd = a.svd(true, true);
+        let alpha = match svd.solve(&b, 1e-10) {
+            Ok(sol) => sol[0], // Handle the successful case
+            Err(err_msg) => {
+                return Err(CameraModelError::NumericalError(err_msg.to_string()));
+            }
+        };
+
+        // Clamp alpha to valid range (0, 1]
+        let alpha = alpha;
+
         let model = DoubleSphereModel {
             intrinsics: intrinsics.clone(),
             resolution: resolution.clone(),
-            xi: 0.0,
-            alpha: 1.0,
+            xi,
+            alpha,
         };
 
         // Validate parameters

@@ -350,13 +350,76 @@ impl CameraModel for RadTanModel {
     fn initialize(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
-        _points_2d: &Matrix2xX<f64>,
-        _points_3d: &Matrix3xX<f64>,
+        points_2d: &Matrix2xX<f64>,
+        points_3d: &Matrix3xX<f64>,
     ) -> Result<Self, CameraModelError> {
+        if points_2d.ncols() != points_3d.ncols() {
+            return Err(CameraModelError::InvalidParams(
+                "Number of 2D and 3D points must match".to_string(),
+            ));
+        }
+
+        let n_points = points_2d.ncols();
+
+        // Set up matrices for solving the system: A * x = b
+        // Where x will contain the distortion parameters k1, k2, k3
+        let mut a = nalgebra::DMatrix::zeros(n_points * 2, 3);
+        let mut b = nalgebra::DVector::zeros(n_points * 2);
+
+        for i in 0..n_points {
+            let x = points_3d[(0, i)]; // X
+            let y = points_3d[(1, i)]; // Y
+            let z = points_3d[(2, i)]; // Z
+            let u = points_2d[(0, i)]; // u
+            let v = points_2d[(1, i)]; // v
+
+            // Calculate normalized image coordinates
+            let x_prime = x / z;
+            let y_prime = y / z;
+
+            // Calculate radial terms
+            let r2 = x_prime * x_prime + y_prime * y_prime;
+            let r4 = r2 * r2;
+            let r6 = r4 * r2;
+
+            // Fill matrix A
+            a[(i * 2, 0)] = r2;
+            a[(i * 2, 1)] = r4;
+            a[(i * 2, 2)] = r6;
+            a[(i * 2 + 1, 0)] = r2;
+            a[(i * 2 + 1, 1)] = r4;
+            a[(i * 2 + 1, 2)] = r6;
+
+            // Fill vector b
+            b[i * 2] = (u - intrinsics.cx) / (intrinsics.fx * x_prime) - 1.0;
+            b[i * 2 + 1] = (v - intrinsics.cy) / (intrinsics.fy * y_prime) - 1.0;
+        }
+
+        // Solve Ax = b for x using SVD
+        // A: (2*num_points) x 3
+        // x: 3 x 1 (vector)
+        // b: (2*num_points) x 1 (vector)
+        let svd = a.svd(true, true);
+
+        let x = match svd.solve(&b, 1e-10) {
+            Ok(sol) => sol, // Handle the successful case
+            Err(err_msg) => {
+                return Err(CameraModelError::NumericalError(err_msg.to_string()));
+            }
+        };
+
+        // Create the model with the computed distortion parameters
+        let mut distortion = [0.0; 5];
+        distortion[0] = x[0]; // k1
+        distortion[1] = x[1]; // k2
+        distortion[4] = x[2]; // k3
+        distortion[2] = 0.0; // p1
+        distortion[3] = 0.0; // p2
+
         let model = RadTanModel {
             intrinsics: intrinsics.clone(),
             resolution: resolution.clone(),
-            distortion: [0.0; 5],
+            distortion,
         };
 
         // Validate parameters
