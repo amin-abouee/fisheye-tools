@@ -90,7 +90,7 @@ impl CameraModel for KannalaBrandtModel {
         Ok(model)
     }
 
-    fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
+    fn save_to_yaml(&self, _path: &str) -> Result<(), CameraModelError> {
         // Implementation for saving to YAML
         Ok(())
     }
