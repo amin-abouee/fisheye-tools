@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Input Path: {:?}", cli.input_path);
 
     // Convert PathBuf to &str for loading functions
-    let n = 154 as usize;
+    let n = 100 as usize;
     let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
     let input_model_type = cli.input_model.as_str();
     let input_model = create_input_model(input_model_type, input_path_str)?;
@@ -127,12 +127,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use crate::camera::{CameraModel, DoubleSphereModel, RadTanModel};
-    use nalgebra::Point3;
+    use nalgebra::Vector3;
 
     #[test]
     fn test_radtan_camera() {
         let model = RadTanModel::load_from_yaml("samples/rad_tan.yaml").unwrap();
-        let point_3d = Point3::new(1.0, 1.0, 3.0);
+        let point_3d = Vector3::new(1.0, 1.0, 3.0);
         let point_2d = model.project(&point_3d).unwrap();
         assert!(point_2d.x > 0.0);
         assert!(point_2d.y > 0.0);
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_double_sphere_camera() {
         let model = DoubleSphereModel::load_from_yaml("samples/double_sphere.yaml").unwrap();
-        let point_3d = Point3::new(1.0, 1.0, 3.0);
+        let point_3d = Vector3::new(1.0, 1.0, 3.0);
         let point_2d = model.project(&point_3d).unwrap();
         assert!(point_2d.x > 0.0);
         assert!(point_2d.y > 0.0);
