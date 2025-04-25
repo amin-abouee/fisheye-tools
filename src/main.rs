@@ -3,7 +3,7 @@ pub mod geometry;
 
 use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
 use clap::Parser;
-use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2};
+use nalgebra::{Matrix2xX, Matrix3xX};
 use std::path::PathBuf; // Use PathBuf for paths
 
 /// Simple program to demonstrate reading input/output model paths from args
@@ -104,6 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("input_model_intrinsics: {:?}", input_model_intrinsics);
     let input_model_resolution = input_model.get_resolution();
     println!("input_model_resolution: {:?}", input_model_resolution);
+    let input_model_distortion = input_model.get_distortion();
+    println!("input_model_distortion: {:?}", input_model_distortion);
 
     let output_model_type = cli.output_model.as_str();
     let output_model = create_output_model(
