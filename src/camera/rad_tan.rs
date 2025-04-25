@@ -347,6 +347,10 @@ impl CameraModel for RadTanModel {
         self.intrinsics.clone()
     }
 
+    fn get_distortion(&self) -> Vec<f64> {
+        self.distortion.to_vec()
+    }
+
     fn initialize(
         intrinsics: &Intrinsics,
         resolution: &Resolution,

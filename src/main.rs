@@ -1,9 +1,10 @@
 pub mod camera;
 pub mod geometry;
 
-// use crate::camera::{CameraModel, DoubleSphereModel, RadTanModel};
-pub use clap::Parser;
-pub use std::path::PathBuf; // Use PathBuf for paths
+use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
+use clap::Parser;
+use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2};
+use std::path::PathBuf; // Use PathBuf for paths
 
 /// Simple program to demonstrate reading input/output model paths from args
 #[derive(Parser, Debug)]
@@ -24,7 +25,63 @@ struct Cli {
     input_path: PathBuf,
 }
 
-fn main() {
+fn create_input_model(
+    input_model_type: &str,
+    input_path: &str,
+) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
+    let input_model: Box<dyn CameraModel> = match input_model_type {
+        "rad_tan" => {
+            println!("Successfully loaded input model: RadTan");
+            Box::new(RadTanModel::load_from_yaml(input_path)?)
+        }
+        "double_sphere" => {
+            println!("Successfully loaded input model: DoubleSphere");
+            Box::new(DoubleSphereModel::load_from_yaml(input_path)?)
+        }
+        _ => {
+            eprintln!("Unsupported input model type: {}", input_model_type);
+            return Err("Unsupported input model type".into());
+        }
+    };
+    Ok(input_model)
+}
+
+fn create_output_model(
+    output_model_type: &str,
+    input_intrinsic: &Intrinsics,
+    input_resolution: &Resolution,
+    points_2d: &Matrix2xX<f64>,
+    points_3d: &Matrix3xX<f64>,
+) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
+    let output_model: Box<dyn CameraModel> = match output_model_type {
+        "rad_tan" => {
+            println!("Successfully loaded input model: RadTan");
+            Box::new(RadTanModel::initialize(
+                &input_intrinsic,
+                &input_resolution,
+                &points_2d,
+                &points_3d,
+            )?)
+        }
+        "double_sphere" => {
+            println!("Successfully loaded input model: DoubleSphere");
+            Box::new(DoubleSphereModel::initialize(
+                &input_intrinsic,
+                &input_resolution,
+                &points_2d,
+                &points_3d,
+            )?)
+        }
+        _ => {
+            eprintln!("Unsupported input model type: {}", output_model_type);
+            return Err("Unsupported input model type".into());
+        }
+    };
+
+    Ok(output_model)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse the command line arguments into the Cli struct
     // clap automatically handles errors (e.g., missing args) and --help / --version
     let cli = Cli::parse();
@@ -34,51 +91,41 @@ fn main() {
     println!("Output Model Type: {}", cli.output_model);
     println!("Input Path: {:?}", cli.input_path);
 
-    // let input_model = match cli.input_model.as_str() {
-    //     "pinhole" => PinholeModel::load_from_yaml(cli.input_path.to_str().unwrap()).unwrap(),
-    //     "radtan" => RadTanModel::load_from_yaml(cli.input_path.to_str().unwrap()).unwrap(),
-    //     "double_sphere" => {
-    //         DoubleSphereModel::load_from_yaml(cli.input_path.to_str().unwrap()).unwrap()
-    //     }
-    //     _ => {
-    //         eprintln!("Unsupported input model type: {}", cli.input_model);
-    //         std::process::exit(1);
-    //     }
-    // };
+    // Convert PathBuf to &str for loading functions
+    let n = 154 as usize;
+    let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
+    let input_model_type = cli.input_model.as_str();
+    let input_model = create_input_model(input_model_type, input_path_str)?;
+    let (points_2d, points_3d) = geometry::sample_points(Some(&*input_model), n).unwrap();
+    println!("points_2d: {:?}", points_2d.ncols());
+    println!("points_3d: {:?}", points_3d.ncols());
 
-    // match cli.output_model.as_str() {
-    //     "pinhole" => {
-    //         let model = PinholeModel::load_from_yaml(cli.input_path).unwrap();
-    //         println!("Loaded Pinhole Model");
-    //     }
-    //     "radtan" => {
-    //         let model = RadTanModel::load_from_yaml(cli.input_path).unwrap();
-    //         println!("Loaded RadTan Model");
-    //     }
-    //     "double_sphere" => {
-    //         let model = DoubleSphereModel::load_from_yaml(cli.input_path).unwrap();
-    //         println!("Loaded Double Sphere Model");
-    //     }
-    //     _ => {
-    //         eprintln!("Unsupported output model type: {}", cli.output_model);
-    //         std::process::exit(1);
-    //     }
-    // }
+    let input_model_intrinsics = input_model.get_intrinsics();
+    println!("input_model_intrinsics: {:?}", input_model_intrinsics);
+    let input_model_resolution = input_model.get_resolution();
+    println!("input_model_resolution: {:?}", input_model_resolution);
+
+    let output_model_type = cli.output_model.as_str();
+    let output_model = create_output_model(
+        output_model_type,
+        &input_model_intrinsics,
+        &input_model_resolution,
+        &points_2d,
+        &points_3d,
+    )?;
+
+    println!("Output Model Parameters:");
+    println!("Intrinsics: {:?}", output_model.get_intrinsics());
+    println!("Resolution: {:?}", output_model.get_resolution());
+    println!("Resolution: {:?}", output_model.get_distortion());
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::camera::{CameraModel, DoubleSphereModel, RadTanModel};
     use nalgebra::Point3;
-
-    // #[test]
-    // fn test_pinhole_camera() {
-    //     let model = PinholeModel::load_from_yaml("samples/pinhole.yaml").unwrap();
-    //     let point_3d = Point3::new(1.0, 1.0, 3.0);
-    //     let point_2d = model.project(&point_3d).unwrap();
-    //     assert!(point_2d.x > 0.0);
-    //     assert!(point_2d.y > 0.0);
-    // }
 
     #[test]
     fn test_radtan_camera() {

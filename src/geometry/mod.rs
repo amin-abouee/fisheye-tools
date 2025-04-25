@@ -1,19 +1,27 @@
 use crate::camera::{CameraModel, CameraModelError};
 use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2};
 
-// #[derive(thiserror::Error, Debug)]
-// pub enum GeometryError {
-//     #[error("Camera model does not exist")]
-//     CameraModelDoesNotExist,
-//     #[error("Invalid camera parameters: {0}")]
-//     InvalidParams(String),
-//     #[error("Failed to load YAML: {0}")]
-//     YamlError(String),
-//     #[error("IO Error: {0}")]
-//     IOError(String),
-//     #[error("NumericalError: {0}")]
-//     NumericalError(String),
-// }
+#[derive(thiserror::Error, Debug)]
+pub enum GeometryError {
+    #[error("Camera model does not exist")]
+    CameraModelDoesNotExist,
+    #[error("Numerical error in computation: {0}")]
+    NumericalError(String),
+    #[error("Matrix singularity detected")]
+    SingularMatrix,
+    #[error("Point projection failed: {0}")]
+    ProjectionError(String),
+    #[error("Point unprojection failed: {0}")]
+    UnprojectionError(String),
+    #[error("Invalid dimensions for geometric operation: {0}")]
+    DimensionMismatch(String),
+    #[error("Point lies outside valid domain: {0}")]
+    DomainError(String),
+    #[error("Optimization failed to converge: {0}")]
+    ConvergenceError(String),
+    #[error("Invalid geometric transformation: {0}")]
+    TransformationError(String),
+}
 
 /// Generate a grid of sample points that are evenly distributed across the image,
 /// optionally unprojecting them to 3D using a provided camera model
@@ -32,17 +40,20 @@ use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2};
 ///   * Matrix2xX where each column represents a 2D point with pixel coordinates
 ///   * Matrix3xX where each column represents the corresponding 3D point
 pub fn sample_points<T>(
-    width: f64,
-    height: f64,
-    n: usize,
     camera_model: Option<&T>,
+    n: usize,
 ) -> Result<(Matrix2xX<f64>, Matrix3xX<f64>), CameraModelError>
 where
-    T: CameraModel,
+    T: ?Sized + CameraModel,
 {
+    let width = camera_model.unwrap().get_resolution().width as f64;
+    let height = camera_model.unwrap().get_resolution().height as f64;
     // Calculate the number of cells in each dimension
     let num_cells_x = (n as f64 * (width / height)).sqrt().round() as i32;
     let num_cells_y = (n as f64 * (height / width)).sqrt().round() as i32;
+
+    println!("num_cells_x: {:?}", num_cells_x);
+    println!("num_cells_y: {:?}", num_cells_y);
 
     // Calculate the dimensions of each cell
     let cell_width = width / num_cells_x as f64;
@@ -50,6 +61,8 @@ where
 
     // Calculate total number of points
     let total_points = (num_cells_x * num_cells_y) as usize;
+
+    println!("total_points: {:?}", total_points);
 
     // Create a matrix with the appropriate size
     let mut points_2d_matrix = Matrix2xX::zeros(total_points);
@@ -116,10 +129,8 @@ mod tests {
     fn test_sample_points() {
         let input_path = "samples/double_sphere.yaml";
         let camera_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
-        let width = 800 as f64;
-        let height = 600 as f64;
         let n = 100 as usize;
-        let (points_2d, points_3d) = sample_points(width, height, n, Some(&camera_model)).unwrap();
+        let (points_2d, points_3d) = sample_points(Some(&camera_model), n).unwrap();
 
         // Check that we have some valid points
         assert!(!points_2d.is_empty(), "No valid 2D-points were generated");
