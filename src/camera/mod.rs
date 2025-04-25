@@ -94,6 +94,9 @@ pub trait CameraModel {
 
     /// Get the intrinsic parameters of the camera
     fn get_intrinsics(&self) -> Intrinsics;
+
+    /// Get the distortion parameters of the camera
+    fn get_distortion(&self) -> Vec<f64>;
 }
 
 /// Common validation functions for camera parameters
