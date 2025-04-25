@@ -1,5 +1,5 @@
 use crate::camera::{CameraModel, CameraModelError};
-use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2};
+use nalgebra::{Matrix2xX, Matrix3xX, Vector2};
 
 #[derive(thiserror::Error, Debug)]
 pub enum GeometryError {
@@ -88,7 +88,7 @@ where
     // Unproject each 2D point and filter for z > 0
     for col_idx in 0..points_2d_matrix.ncols() {
         let point_2d = points_2d_matrix.column(col_idx);
-        let p2d = Point2::new(point_2d[0], point_2d[1]);
+        let p2d = Vector2::new(point_2d[0], point_2d[1]);
 
         // Try to unproject the point
         if let Ok(p3d) = camera_model.unproject(&p2d) {
@@ -113,8 +113,8 @@ where
         .zip(valid_3d_points.iter())
         .enumerate()
     {
-        points_2d_result.set_column(idx, &p2d.coords);
-        points_3d_result.set_column(idx, &p3d.coords);
+        points_2d_result.set_column(idx, &p2d);
+        points_3d_result.set_column(idx, &p3d);
     }
 
     Ok((points_2d_result, points_3d_result))
