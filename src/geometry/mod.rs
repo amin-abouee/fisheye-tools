@@ -1,5 +1,19 @@
 use crate::camera::{CameraModel, CameraModelError};
-use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2, Vector3};
+use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2};
+
+// #[derive(thiserror::Error, Debug)]
+// pub enum GeometryError {
+//     #[error("Camera model does not exist")]
+//     CameraModelDoesNotExist,
+//     #[error("Invalid camera parameters: {0}")]
+//     InvalidParams(String),
+//     #[error("Failed to load YAML: {0}")]
+//     YamlError(String),
+//     #[error("IO Error: {0}")]
+//     IOError(String),
+//     #[error("NumericalError: {0}")]
+//     NumericalError(String),
+// }
 
 /// Generate a grid of sample points that are evenly distributed across the image,
 /// optionally unprojecting them to 3D using a provided camera model
@@ -17,12 +31,15 @@ use nalgebra::{Matrix2xX, Matrix3xX, Point2, Vector2, Vector3};
 /// * A tuple containing:
 ///   * Matrix2xX where each column represents a 2D point with pixel coordinates
 ///   * Matrix3xX where each column represents the corresponding 3D point
-pub fn sample_points<T: CameraModel>(
+pub fn sample_points<T>(
     width: f64,
     height: f64,
     n: usize,
     camera_model: Option<&T>,
-) -> Result<(Matrix2xX<f64>, Matrix3xX<f64>), CameraModelError> {
+) -> Result<(Matrix2xX<f64>, Matrix3xX<f64>), CameraModelError>
+where
+    T: CameraModel,
+{
     // Calculate the number of cells in each dimension
     let num_cells_x = (n as f64 * (width / height)).sqrt().round() as i32;
     let num_cells_y = (n as f64 * (height / width)).sqrt().round() as i32;
@@ -46,16 +63,6 @@ pub fn sample_points<T: CameraModel>(
             points_2d_matrix.set_column(idx, &Vector2::new(x, y));
             idx += 1;
         }
-    }
-
-    // If no camera model is provided, create 3D points at z=1
-    if camera_model.is_none() {
-        let mut points_3d_result = Matrix3xX::zeros(total_points);
-        for col_idx in 0..points_2d_matrix.ncols() {
-            let point_2d = points_2d_matrix.column(col_idx);
-            points_3d_result.set_column(col_idx, &Vector3::new(point_2d[0], point_2d[1], 1.0));
-        }
-        return Ok((points_2d_matrix, points_3d_result));
     }
 
     // Unwrap the camera model (safe because we checked it's Some)
@@ -93,8 +100,8 @@ pub fn sample_points<T: CameraModel>(
         .zip(valid_3d_points.iter())
         .enumerate()
     {
-        points_2d_result.set_column(idx, &Vector2::new(p2d.x, p2d.y));
-        points_3d_result.set_column(idx, &Vector3::new(p3d.x, p3d.y, p3d.z));
+        points_2d_result.set_column(idx, &p2d.coords);
+        points_3d_result.set_column(idx, &p3d.coords);
     }
 
     Ok((points_2d_result, points_3d_result))
@@ -103,73 +110,28 @@ pub fn sample_points<T: CameraModel>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::camera::{DoubleSphereModel, Intrinsics, Resolution};
+    use crate::camera::DoubleSphereModel;
 
     #[test]
     fn test_sample_points() {
-        // Test without camera model
-        let width = 800f64;
-        let height = 600f64;
-        let n = 100;
-
-        let (points_2d, points_3d) =
-            sample_points(width, height, n, None::<&DoubleSphereModel>).unwrap();
-
-        // Test that the number of points is approximately n
-        let expected_count = (n as f64 * 0.8) as usize..=(n as f64 * 1.2) as usize;
-        assert!(
-            expected_count.contains(&points_2d.ncols()),
-            "Expected around {} points, got {}",
-            n,
-            points_2d.ncols()
-        );
-
-        // Test that all points are within the image bounds
-        for col_idx in 0..points_2d.ncols() {
-            let point = points_2d.column(col_idx);
-            assert!(
-                point[0] >= 0.0 && point[0] < width,
-                "Point x-coordinate outside image bounds: {}",
-                point[0]
-            );
-            assert!(
-                point[1] >= 0.0 && point[1] < height,
-                "Point y-coordinate outside image bounds: {}",
-                point[1]
-            );
-
-            // Check that 3D points have z=1.0 when no camera model is provided
-            let point_3d = points_3d.column(col_idx);
-            assert_eq!(
-                point_3d[2], 1.0,
-                "z coordinate should be 1.0 without camera model"
-            );
-        }
-
-        // Test with camera model
-        let intrinsics = Intrinsics {
-            fx: 400.0,
-            fy: 400.0,
-            cx: width / 2.0,
-            cy: height / 2.0,
-        };
-        let resolution = Resolution {
-            width: width as u32,
-            height: height as u32,
-        };
-        let camera_model = DoubleSphereModel {
-            intrinsics,
-            resolution,
-            xi: 0.1,
-            alpha: 0.5,
-        };
-
+        let input_path = "samples/double_sphere.yaml";
+        let camera_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
+        let width = 800 as f64;
+        let height = 600 as f64;
+        let n = 100 as usize;
         let (points_2d, points_3d) = sample_points(width, height, n, Some(&camera_model)).unwrap();
 
         // Check that we have some valid points
+        assert!(!points_2d.is_empty(), "No valid 2D-points were generated");
+
         assert!(
-            !points_2d.is_empty(),
-            "No valid points were generated with camera model"
+            !points_3d.is_empty(),
+            "No valid 3D-points were generated with camera model"
+        );
+
+        assert!(
+            points_2d.ncols() == points_3d.ncols(),
+            "Number of 2D and 3D points should be equal"
         );
 
         // Check that all 3D points have z > 0
