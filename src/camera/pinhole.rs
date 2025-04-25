@@ -1,4 +1,4 @@
-use nalgebra::{Point2, Point3};
+use nalgebra::{Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -13,7 +13,7 @@ pub struct PinholeModel {
 }
 
 impl CameraModel for PinholeModel {
-    fn project(&self, point_3d: &Point3<f64>) -> Result<Point2<f64>, CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         // If z is very small, the point is at the camera center
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
@@ -29,10 +29,10 @@ impl CameraModel for PinholeModel {
             return Err(CameraModelError::ProjectionOutSideImage);
         }
 
-        Ok(Point2::new(u, v))
+        Ok(Vector2::new(u, v))
     }
 
-    fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError> {
+    fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
         if point_2d.x < 0.0
             || point_2d.x >= self.resolution.width as f64
             || point_2d.y < 0.0
@@ -49,7 +49,7 @@ impl CameraModel for PinholeModel {
         let norm: f64 = (1.0 as f64 + r2).sqrt();
         let norm_inv: f64 = 1.0 as f64 / norm;
 
-        Ok(Point3::new(mx * norm_inv, my * norm_inv, norm_inv))
+        Ok(Vector3::new(mx * norm_inv, my * norm_inv, norm_inv))
     }
 
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
@@ -202,8 +202,8 @@ mod tests {
         let model = PinholeModel::load_from_yaml(path).unwrap();
 
         // 3D point in camera coordinates
-        let point_3d = Point3::new(1.0, 1.0, 5.0);
-        let norm_3d = point_3d / point_3d.coords.norm();
+        let point_3d = Vector3::new(1.0, 1.0, 5.0);
+        let norm_3d = point_3d.normalize();
 
         // Project the 3D point to 2D
         let point_2d = model.project(&point_3d).unwrap();

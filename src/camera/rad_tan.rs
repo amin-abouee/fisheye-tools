@@ -1,4 +1,4 @@
-use nalgebra::{Matrix2, Matrix2xX, Matrix3xX, Point2, Point3};
+use nalgebra::{Matrix2, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -14,7 +14,7 @@ pub struct RadTanModel {
 }
 
 impl CameraModel for RadTanModel {
-    fn project(&self, point_3d: &Point3<f64>) -> Result<Point2<f64>, CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         // If z is very small, the point is at the camera center
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
@@ -59,10 +59,10 @@ impl CameraModel for RadTanModel {
             return Err(CameraModelError::ProjectionOutSideImage);
         }
 
-        Ok(Point2::new(u, v))
+        Ok(Vector2::new(u, v))
     }
 
-    fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError> {
+    fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
         if point_2d.x < 0.0
             || point_2d.x >= self.resolution.width as f64
             || point_2d.y < 0.0
@@ -88,7 +88,7 @@ impl CameraModel for RadTanModel {
         // This is the target point in the normalized image plane we want to match
         let x_distorted = (u - cx) / fx;
         let y_distorted = (v - cy) / fy;
-        let target_distorted_point = Point2::new(x_distorted, y_distorted);
+        let target_distorted_point = Vector2::new(x_distorted, y_distorted);
 
         // Initial guess for the undistorted normalized point (start with the distorted point)
         let mut point = target_distorted_point;
@@ -113,7 +113,7 @@ impl CameraModel for RadTanModel {
                 x * radial_distortion + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
             let y_distorted_estimate =
                 y * radial_distortion + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
-            let estimated_distorted_point = Point2::new(x_distorted_estimate, y_distorted_estimate);
+            let estimated_distorted_point = Vector2::new(x_distorted_estimate, y_distorted_estimate);
 
             // Calculate the error: difference between the estimated distorted point
             // and the actual target distorted point
@@ -175,15 +175,9 @@ impl CameraModel for RadTanModel {
         }
 
         // Create the 3D point with the undistorted x, y and z=1
-        let mut point3d = Point3::new(point.x, point.y, 1.0);
+        let point3d = Vector3::new(point.x, point.y, 1.0);
 
-        // Normalize the point to get a unit vector
-        let norm = point3d.coords.norm();
-        point3d.x /= norm;
-        point3d.y /= norm;
-        point3d.z /= norm;
-
-        Ok(point3d)
+        Ok(point3d.normalize())
     }
 
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
@@ -502,8 +496,8 @@ mod tests {
         let model = RadTanModel::load_from_yaml(path).unwrap();
 
         // Create a 3D point in camera coordinates (pointing somewhat forward and to the side)
-        let point_3d = Point3::new(0.5, -0.3, 2.0);
-        let norm_3d = point_3d / point_3d.coords.norm();
+        let point_3d = Vector3::new(0.5, -0.3, 2.0);
+        let norm_3d = point_3d.normalize();
 
         // Project the 3D point to pixel coordinates
         let point_2d = model.project(&point_3d).unwrap();
@@ -528,16 +522,16 @@ mod tests {
 
         // Define a set of 3D test points covering different parts of the field of view
         let test_points = vec![
-            Point3::new(0.0, 0.0, 1.0),   // Center
-            Point3::new(0.5, 0.0, 1.0),   // Right
-            Point3::new(-0.5, 0.0, 1.0),  // Left
-            Point3::new(0.0, 0.5, 1.0),   // Top
-            Point3::new(0.0, -0.5, 1.0),  // Bottom
-            Point3::new(0.3, 0.4, 1.0),   // Top-right
-            Point3::new(-0.3, 0.4, 1.0),  // Top-left
-            Point3::new(0.3, -0.4, 1.0),  // Bottom-right
-            Point3::new(-0.3, -0.4, 1.0), // Bottom-left
-            Point3::new(0.1, 0.1, 2.0),   // Further away
+            Vector3::new(0.0, 0.0, 1.0),   // Center
+            Vector3::new(0.5, 0.0, 1.0),   // Right
+            Vector3::new(-0.5, 0.0, 1.0),  // Left
+            Vector3::new(0.0, 0.5, 1.0),   // Top
+            Vector3::new(0.0, -0.5, 1.0),  // Bottom
+            Vector3::new(0.3, 0.4, 1.0),   // Top-right
+            Vector3::new(-0.3, 0.4, 1.0),  // Top-left
+            Vector3::new(0.3, -0.4, 1.0),  // Bottom-right
+            Vector3::new(-0.3, -0.4, 1.0), // Bottom-left
+            Vector3::new(0.1, 0.1, 2.0),   // Further away
         ];
 
         for (i, original_point) in test_points.iter().enumerate() {
@@ -566,8 +560,8 @@ mod tests {
             };
 
             // The original point and unprojected ray should point in the same direction
-            let original_direction = original_point.coords.normalize();
-            let dot_product = original_direction.dot(&ray_direction.coords);
+            let original_direction = original_point.normalize();
+            let dot_product = original_direction.dot(&ray_direction);
 
             // Assert with helpful debug information
             assert!(dot_product > 0.99,

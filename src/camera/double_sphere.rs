@@ -1,4 +1,4 @@
-use nalgebra::{Matrix2xX, Matrix3xX, Point2, Point3};
+use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -15,7 +15,7 @@ pub struct DoubleSphereModel {
 }
 
 impl CameraModel for DoubleSphereModel {
-    fn project(&self, point_3d: &Point3<f64>) -> Result<Point2<f64>, CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         const PRECISION: f64 = 1e-3;
 
         let x = point_3d.x;
@@ -38,10 +38,10 @@ impl CameraModel for DoubleSphereModel {
         let projected_x = self.intrinsics.fx * (x / denom) + self.intrinsics.cx;
         let projected_y = self.intrinsics.fy * (y / denom) + self.intrinsics.cy;
 
-        Ok(Point2::new(projected_x, projected_y))
+        Ok(Vector2::new(projected_x, projected_y))
     }
 
-    fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError> {
+    fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
         const PRECISION: f64 = 1e-3;
 
         let fx = self.intrinsics.fx;
@@ -78,16 +78,9 @@ impl CameraModel for DoubleSphereModel {
         let coeff = num / denom;
 
         // Calculate the unprojected 3D point
-        let point3d = Point3::new(coeff * mx, coeff * my, coeff * mz - xi);
+        let point3d = Vector3::new(coeff * mx, coeff * my, coeff * mz - xi);
 
-        // Normalize the point to get a unit vector
-        let norm = point3d.coords.norm();
-
-        Ok(Point3::new(
-            point3d.x / norm,
-            point3d.y / norm,
-            point3d.z / norm,
-        ))
+        Ok(point3d.normalize())
     }
 
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
@@ -361,8 +354,8 @@ mod tests {
         let model = DoubleSphereModel::load_from_yaml(path).unwrap();
 
         // Create a 3D point in camera coordinates (pointing somewhat forward and to the side)
-        let point_3d = Point3::new(0.5, -0.3, 2.0);
-        let norm_3d = point_3d / point_3d.coords.norm();
+        let point_3d = Vector3::new(0.5, -0.3, 2.0);
+        let norm_3d = point_3d.normalize();
 
         // Project the 3D point to pixel coordinates
         let point_2d = model.project(&point_3d).unwrap();

@@ -1,4 +1,4 @@
-use nalgebra::{Matrix2xX, Matrix3xX, Point2, Point3};
+use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use yaml_rust::YamlLoader;
@@ -13,7 +13,7 @@ pub struct KannalaBrandtModel {
 }
 
 impl CameraModel for KannalaBrandtModel {
-    fn project(&self, point_3d: &Point3<f64>) -> Result<Point2<f64>, CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
         }
@@ -24,7 +24,7 @@ impl CameraModel for KannalaBrandtModel {
         ))
     }
 
-    fn unproject(&self, point_2d: &Point2<f64>) -> Result<Point3<f64>, CameraModelError> {
+    fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
         if point_2d.x < 0.0
             || point_2d.x >= self.resolution.width as f64
             || point_2d.y < 0.0
