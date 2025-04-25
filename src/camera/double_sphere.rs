@@ -230,6 +230,10 @@ impl CameraModel for DoubleSphereModel {
         self.intrinsics.clone()
     }
 
+    fn get_distortion(&self) -> Vec<f64> {
+        vec![self.xi, self.alpha]
+    }
+
     fn initialize(
         intrinsics: &Intrinsics,
         resolution: &Resolution,

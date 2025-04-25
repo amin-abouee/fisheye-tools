@@ -157,6 +157,10 @@ impl CameraModel for PinholeModel {
         self.intrinsics.clone()
     }
 
+    fn get_distortion(&self) -> Vec<f64> {
+        vec![]
+    }
+
     fn initialize(
         intrinsics: &Intrinsics,
         resolution: &Resolution,

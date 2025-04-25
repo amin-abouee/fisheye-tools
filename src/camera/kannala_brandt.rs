@@ -109,6 +109,10 @@ impl CameraModel for KannalaBrandtModel {
         self.intrinsics.clone()
     }
 
+    fn get_distortion(&self) -> Vec<f64> {
+        self.coefficients.to_vec()
+    }
+
     fn initialize(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
