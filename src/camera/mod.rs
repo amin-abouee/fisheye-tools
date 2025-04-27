@@ -97,6 +97,14 @@ pub trait CameraModel {
 
     /// Get the distortion parameters of the camera
     fn get_distortion(&self) -> Vec<f64>;
+
+    fn optimize(
+        &mut self,
+        points_3d: &Matrix3xX<f64>,
+        points_2d: &Matrix2xX<f64>,
+        verbose: bool,
+    ) -> Result<(), CameraModelError>;
+
 }
 
 /// Common validation functions for camera parameters

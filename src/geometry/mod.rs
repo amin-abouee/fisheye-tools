@@ -11,16 +11,6 @@ pub enum GeometryError {
     SingularMatrix,
     #[error("Point projection failed: {0}")]
     ProjectionError(String),
-    #[error("Point unprojection failed: {0}")]
-    UnprojectionError(String),
-    #[error("Invalid dimensions for geometric operation: {0}")]
-    DimensionMismatch(String),
-    #[error("Point lies outside valid domain: {0}")]
-    DomainError(String),
-    #[error("Optimization failed to converge: {0}")]
-    ConvergenceError(String),
-    #[error("Invalid geometric transformation: {0}")]
-    TransformationError(String),
 }
 
 /// Generate a grid of sample points that are evenly distributed across the image,

@@ -1,4 +1,9 @@
-use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
+use argmin::{
+    core::{observers::ObserverMode, CostFunction, Error, Executor, Gradient},
+    solver::{linesearch::MoreThuenteLineSearch, quasinewton::LBFGS},
+};
+use argmin_observer_slog::SlogLogger;
+use nalgebra::{Matrix3xX, Matrix2xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -12,6 +17,193 @@ pub struct DoubleSphereModel {
     pub resolution: Resolution,
     pub xi: f64,
     pub alpha: f64,
+}
+
+// Cost function for optimization
+#[derive(Clone)]
+struct DoubleSphereOptimizationCost {
+    points_3d: Matrix3xX<f64>,
+    points_2d: Matrix2xX<f64>,
+    // Parameter bounds
+    lower_bounds: nalgebra::SVector<f64, 6>,
+    upper_bounds: nalgebra::SVector<f64, 6>,
+}
+
+impl CostFunction for DoubleSphereOptimizationCost {
+    type Param = nalgebra::SVector<f64, 6>;
+    type Output = f64;
+
+    fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
+        // Apply parameter bounds by projecting parameters to valid range
+        let mut bounded_p = p.clone();
+        for i in 0..p.len() {
+            bounded_p[i] = bounded_p[i].max(self.lower_bounds[i]).min(self.upper_bounds[i]);
+        }
+        
+        // Extract parameters
+        let fx = bounded_p[0];
+        let fy = bounded_p[1];
+        let cx = bounded_p[2];
+        let cy = bounded_p[3];
+        let xi = bounded_p[4];
+        let alpha = bounded_p[5];
+
+        // Create temporary model with these parameters
+        let intrinsics = Intrinsics { fx, fy, cx, cy };
+        let resolution = Resolution {
+            width: 0,  // Not used in projection
+            height: 0, // Not used in projection
+        };
+
+        let model = DoubleSphereModel {
+            intrinsics,
+            resolution,
+            xi,
+            alpha,
+        };
+
+        // Calculate cost as sum of squared reprojection errors
+        let mut total_cost = 0.0;
+
+        for (p3d, p2d) in self.points_3d.column_iter().zip(self.points_2d.column_iter()) {
+            match model.project(&Vector3::from(p3d)) {
+                Ok(projected) => {
+                    // let dx = projected.x - p2d[0];
+                    // let dy = projected.y - p2d[1];
+                    // total_cost += dx * dx + dy * dy;
+                    total_cost += (projected - p2d).norm();
+                }
+                Err(_) => {
+                    // Penalize heavily if point cannot be projected
+                    total_cost += 500.0; // Increased penalty for invalid projections
+                }
+            }
+        }
+        
+        // Add barrier function for parameters near bounds
+        let barrier_weight = 1.0;
+        for i in 0..bounded_p.len() {
+            let dist_to_lower = bounded_p[i] - self.lower_bounds[i];
+            let dist_to_upper = self.upper_bounds[i] - bounded_p[i];
+            
+            // Add logarithmic barrier terms
+            if dist_to_lower > 0.0 && dist_to_lower < 1e-3 {
+                total_cost += barrier_weight * (-dist_to_lower.ln());
+            }
+            if dist_to_upper > 0.0 && dist_to_upper < 1e-3 {
+                total_cost += barrier_weight * (-dist_to_upper.ln());
+            }
+        }
+
+        Ok(total_cost)
+    }
+}
+
+impl Gradient for DoubleSphereOptimizationCost {
+    type Param = nalgebra::SVector<f64, 6>;
+    type Gradient = nalgebra::SVector<f64, 6>;
+
+    fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
+        // Apply parameter bounds by projecting parameters to valid range
+        let mut bounded_p = p.clone();
+        for i in 0..p.len() {
+            bounded_p[i] = bounded_p[i].max(self.lower_bounds[i]).min(self.upper_bounds[i]);
+        }
+        
+        // Extract parameters
+        let fx = bounded_p[0];
+        let fy = bounded_p[1];
+        let cx = bounded_p[2];
+        let cy = bounded_p[3];
+        let xi = bounded_p[4];
+        let alpha = bounded_p[5];
+
+        // Initialize gradient vector
+        let mut gradient_vec = vec![0.0; 6]; // Use a temporary vec
+
+        for (p3d, p2d) in self.points_3d.column_iter().zip(self.points_2d.column_iter()) {
+            let x = p3d.x;
+            let y = p3d.y;
+            let z = p3d.z;
+
+            let xx = x * x;
+            let yy = y * y;
+            let zz = z * z;
+
+            let r2 = xx + yy;
+            let d1_2 = r2 + zz;
+            let d1 = d1_2.sqrt();
+
+            // Calculate projection and Jacobian
+            let k = xi * d1 + z;
+            let kk = k * k;
+            let d2_2 = r2 + kk;
+            let d2 = d2_2.sqrt();
+
+            let norm = alpha * d2 + (1.0 - alpha) * k;
+            let norm2 = norm * norm;
+
+            // Skip points that would cause numerical issues
+            if norm.abs() < 1e-6 {
+                continue;
+            }
+
+            let mx = x / norm;
+            let my = y / norm;
+
+            // Projected point
+            let proj_x = fx * mx + cx;
+            let proj_y = fy * my + cy;
+
+            // Residuals
+            let dx = proj_x - p2d.x;
+            let dy = proj_y - p2d.y;
+
+            // Jacobian components for intrinsics
+            let mut d_proj_d_param = vec![
+                vec![mx, 0.0, 1.0, 0.0, 0.0, 0.0],
+                vec![0.0, my, 0.0, 1.0, 0.0, 0.0],
+            ];
+
+            // Improved Jacobian entries for xi and alpha
+            // Derivative of mx, my with respect to xi
+            let d_norm_d_xi = alpha * k * d1 / d2;
+            let d_mx_d_xi = -x * d_norm_d_xi / norm2;
+            let d_my_d_xi = -y * d_norm_d_xi / norm2;
+            
+            // Derivative of mx, my with respect to alpha
+            let d_norm_d_alpha = d2 - k;
+            let d_mx_d_alpha = -x * d_norm_d_alpha / norm2;
+            let d_my_d_alpha = -y * d_norm_d_alpha / norm2;
+            
+            d_proj_d_param[0][4] = fx * d_mx_d_xi;
+            d_proj_d_param[1][4] = fy * d_my_d_xi;
+            d_proj_d_param[0][5] = fx * d_mx_d_alpha;
+            d_proj_d_param[1][5] = fy * d_my_d_alpha;
+
+            // Update gradient with this point's contribution
+            for i in 0..6 {
+                gradient_vec[i] += 2.0 * (dx * d_proj_d_param[0][i] + dy * d_proj_d_param[1][i]);
+            }
+        }
+        
+        // Add gradient of barrier function for parameters near bounds
+        let barrier_weight = 1.0;
+        for i in 0..bounded_p.len() {
+            let dist_to_lower = bounded_p[i] - self.lower_bounds[i];
+            let dist_to_upper = self.upper_bounds[i] - bounded_p[i];
+            
+            // Add gradient of logarithmic barrier terms
+            if dist_to_lower > 0.0 && dist_to_lower < 1e-3 {
+                gradient_vec[i] -= barrier_weight / dist_to_lower;
+            }
+            if dist_to_upper > 0.0 && dist_to_upper < 1e-3 {
+                gradient_vec[i] += barrier_weight / dist_to_upper;
+            }
+        }
+
+        Ok(nalgebra::SVector::<f64, 6>::from_vec(gradient_vec))
+    }
 }
 
 impl CameraModel for DoubleSphereModel {
@@ -290,6 +482,125 @@ impl CameraModel for DoubleSphereModel {
 
         Ok(model)
     }
+
+    /// Optimize the camera model parameters using the provided 2D-3D point correspondences
+    fn optimize(
+        &mut self,
+        points_3d: &Matrix3xX<f64>,
+        points_2d: &Matrix2xX<f64>,
+        verbose: bool,
+    ) -> Result<(), CameraModelError> {
+        if points_3d.len() != points_2d.len() {
+            return Err(CameraModelError::InvalidParams(
+                "Number of 2D and 3D points must match".to_string(),
+            ));
+        }
+
+        if points_3d.is_empty() {
+            return Err(CameraModelError::InvalidParams(
+                "Points arrays cannot be empty".to_string(),
+            ));
+        }
+
+        // Initial parameters as SVector
+        let param = nalgebra::SVector::<f64, 6>::new(
+            self.intrinsics.fx,
+            self.intrinsics.fy,
+            self.intrinsics.cx,
+            self.intrinsics.cy,
+            self.xi,
+            self.alpha,
+        );
+        
+        // Define parameter bounds as SVector
+        // Lower bounds: fx, fy > 0, cx, cy can be anywhere, xi can be anywhere, alpha in (0,1]
+        let lower_bounds = nalgebra::SVector::<f64, 6>::new(
+            1.0,                // fx > 0
+            1.0,                // fy > 0
+            f64::NEG_INFINITY,  // cx can be anywhere
+            f64::NEG_INFINITY,  // cy can be anywhere
+            f64::NEG_INFINITY,  // xi can be anywhere
+            1e-6,               // alpha > 0 (small positive value)
+        );
+        
+        // Upper bounds: fx, fy, cx, cy can be large, xi can be anywhere, alpha <= 1.0
+        let upper_bounds = nalgebra::SVector::<f64, 6>::new(
+            f64::INFINITY,  // fx can be large
+            f64::INFINITY,  // fy can be large
+            f64::INFINITY,  // cx can be large
+            f64::INFINITY,  // cy can be large
+            f64::INFINITY,  // xi can be anywhere
+            1.0,            // alpha <= 1.0
+        );
+        // Setup cost function with bounds
+        let cost_function = DoubleSphereOptimizationCost {
+            points_3d: points_3d.clone(),
+            points_2d: points_2d.clone(),
+            lower_bounds: lower_bounds.clone(), // Clone SVector
+            upper_bounds: upper_bounds.clone(), // Clone SVector
+        };
+
+        // Setup L-BFGS solver with line search
+        let linesearch = MoreThuenteLineSearch::new();
+        let solver = LBFGS::new(linesearch, 20); // Increased history size for better convergence
+
+        // Create executor
+        let mut executor = Executor::new(cost_function.clone(), solver); // Clone cost function
+
+        // Configure verbosity
+        if verbose {
+            let term_logger = slog_term::TermDecorator::new().build();
+            let drain = slog_term::FullFormat::new(term_logger).build().fuse();
+            let drain = slog_async::Async::new(drain).build().fuse();
+            let logger = slog::Logger::root(drain, slog::o!());
+            executor = executor.add_observer(SlogLogger::new(logger), ObserverMode::Always);
+        }
+
+        // Set initial parameters and optimization options
+        // Set initial parameters and optimization options
+        executor = executor.configure(|state| {
+            state
+                .param(param) // param is now SVector
+                .max_iters(100)       // Maximum number of iterations
+                .target_cost(1e-8)    // Target cost function value
+                // .grad_tol(1e-6)    // Gradient tolerance might be handled differently or implicitly
+        });
+
+        // Run optimization
+        let res = executor
+            .run()
+            .map_err(|e| CameraModelError::NumericalError(e.to_string()))?;
+
+        // Get optimized parameters
+        let opt_param = res
+            .state
+            .best_param
+            .ok_or_else(|| CameraModelError::NumericalError("Optimization failed to find parameters".to_string()))?;
+        
+        // Log optimization results if verbose
+        if verbose {
+            println!("Optimization terminated after {} iterations", res.state.get_iter());
+            println!("Final cost: {}", res.state.get_cost());
+            println!("Termination status: {:?}", res.termination_status);
+        }
+
+        // Apply bounds to the final parameters
+        let final_params = opt_param.zip_map(&lower_bounds, |p, l| p.max(l))
+                                  .zip_map(&upper_bounds, |p, u| p.min(u));
+
+        // Update model parameters from the bounded final parameters
+        self.intrinsics.fx = final_params[0];
+        self.intrinsics.fy = final_params[1];
+        self.intrinsics.cx = final_params[2];
+        self.intrinsics.cy = final_params[3];
+        self.xi = final_params[4];
+        self.alpha = final_params[5];
+
+        // Validate the optimized parameters
+        self.validate_params()?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -371,5 +682,78 @@ mod tests {
         assert!((norm_3d.x - point_3d_unprojected.x).abs() < 1e-6);
         assert!((norm_3d.y - point_3d_unprojected.y).abs() < 1e-6);
         assert!((norm_3d.z - point_3d_unprojected.z).abs() < 1e-6);
+    }
+    
+    #[test]
+    fn test_double_sphere_optimize() {
+        // Create a simple camera model with initial parameters
+        let intrinsics = Intrinsics {
+            fx: 300.0,
+            fy: 300.0,
+            cx: 320.0,
+            cy: 240.0,
+        };
+        
+        let resolution = Resolution {
+            width: 640,
+            height: 480,
+        };
+        
+        let mut model = DoubleSphereModel {
+            intrinsics,
+            resolution,
+            xi: 0.0,
+            alpha: 0.5,
+        };
+        
+        // Create synthetic 3D points in a grid pattern
+        let mut points_3d = Vec::new();
+        let mut points_2d = Vec::new();
+        
+        // Create a reference model with known parameters to generate synthetic data
+        let reference_model = DoubleSphereModel {
+            intrinsics: Intrinsics {
+                fx: 350.0,
+                fy: 350.0,
+                cx: 320.0,
+                cy: 240.0,
+            },
+            resolution,
+            xi: -0.2,
+            alpha: 0.7,
+        };
+        
+        // Generate synthetic data points
+        for x in (-5..=5).step_by(2) {
+            for y in (-5..=5).step_by(2) {
+                for z in [2, 4, 6] {
+                    let point_3d = Vector3::new(x as f64 * 0.1, y as f64 * 0.1, z as f64);
+                    
+                    // Project using reference model
+                    if let Ok(point_2d) = reference_model.project(&point_3d) {
+                        points_3d.push(point_3d);
+                        points_2d.push(point_2d);
+                    }
+                }
+            }
+        }
+        
+        // Optimize the model
+        model.optimize(&points_3d, &points_2d, false).unwrap();
+        
+        // Check that parameters are within reasonable bounds of the reference model
+        assert!((model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 20.0);
+        assert!((model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 20.0);
+        assert!((model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 20.0);
+        assert!((model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 20.0);
+        assert!((model.xi - reference_model.xi).abs() < 0.1);
+        assert!((model.alpha - reference_model.alpha).abs() < 0.1);
+        
+        // Verify that alpha is within bounds (0, 1]
+        assert!(model.alpha > 0.0 && model.alpha <= 1.0);
+        
+        // Verify that focal lengths are positive
+        assert!(model.intrinsics.fx > 0.0);
+        assert!(model.intrinsics.fy > 0.0);
     }
 }

@@ -14,3 +14,8 @@ yaml-rust = "0.4"
 thiserror = "2.0.12"
 kornia = "0.1.8"
 clap = { version = "4.5.4", features = ["derive"] }
+argmin = "0.10"
+argmin-observer-slog = "0.1.0"
+slog = "2"
+slog-term = "2"
+slog-async = "2"

@@ -1,4 +1,4 @@
-use nalgebra::{Vector2, Vector3};
+use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -176,6 +176,15 @@ impl CameraModel for PinholeModel {
         model.validate_params()?;
 
         Ok(model)
+    }
+
+    fn optimize(
+        &mut self,
+        points_3d: &Matrix3xX<f64>,
+        points_2d: &Matrix2xX<f64>,
+        verbose: bool,
+    ) -> Result<(), CameraModelError> {
+        Ok(())
     }
 }
 
