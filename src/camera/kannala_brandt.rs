@@ -133,9 +133,9 @@ impl CameraModel for KannalaBrandtModel {
 
     fn optimize(
         &mut self,
-        points_3d: &Matrix3xX<f64>,
-        points_2d: &Matrix2xX<f64>,
-        verbose: bool,
+        _points_3d: &Matrix3xX<f64>,
+        _points_2d: &Matrix2xX<f64>,
+        _verbose: bool,
     ) -> Result<(), CameraModelError> {
         Ok(())
     }

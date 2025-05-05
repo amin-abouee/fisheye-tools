@@ -113,7 +113,8 @@ impl CameraModel for RadTanModel {
                 x * radial_distortion + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
             let y_distorted_estimate =
                 y * radial_distortion + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
-            let estimated_distorted_point = Vector2::new(x_distorted_estimate, y_distorted_estimate);
+            let estimated_distorted_point =
+                Vector2::new(x_distorted_estimate, y_distorted_estimate);
 
             // Calculate the error: difference between the estimated distorted point
             // and the actual target distorted point
@@ -428,9 +429,9 @@ impl CameraModel for RadTanModel {
 
     fn optimize(
         &mut self,
-        points_3d: &Matrix3xX<f64>,
-        points_2d: &Matrix2xX<f64>,
-        verbose: bool,
+        _points_3d: &Matrix3xX<f64>,
+        _points_2d: &Matrix2xX<f64>,
+        _verbose: bool,
     ) -> Result<(), CameraModelError> {
         Ok(())
     }
