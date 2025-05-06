@@ -704,87 +704,103 @@ mod tests {
 
     #[test]
     fn test_double_sphere_optimize() {
-        // Create a simple camera model with initial parameters
-        let intrinsics = Intrinsics {
-            fx: 300.0,
-            fy: 300.0,
-            cx: 320.0,
-            cy: 240.0,
-        };
+        // Load a reference model from YAML file
+        let input_path = "samples/double_sphere.yaml";
+        let reference_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
 
-        let resolution = Resolution {
-            width: 640,
-            height: 480,
-        };
+        // Use geometry::sample_points to generate a set of 2D-3D point correspondences
+        let n = 100;
+        let (points_2d, points_3d) =
+            crate::geometry::sample_points(Some(&reference_model), n).unwrap();
 
-        let mut model = DoubleSphereModel {
-            intrinsics,
-            resolution: resolution.clone(),
-            xi: 0.0,
-            alpha: 0.5,
-        };
-
-        // Create a reference model with known parameters to generate synthetic data
-        let reference_model = DoubleSphereModel {
+        // Create a model with added noise to the parameters
+        let mut noisy_model = DoubleSphereModel {
             intrinsics: Intrinsics {
-                fx: 350.0,
-                fy: 350.0,
-                cx: 320.0,
-                cy: 240.0,
+                // Add some noise to the intrinsic parameters (±5-10%)
+                fx: reference_model.intrinsics.fx + 2.5,
+                fy: reference_model.intrinsics.fy + 2.5,
+                cx: reference_model.intrinsics.cx + 3.0,
+                cy: reference_model.intrinsics.cy - 3.0,
             },
-            resolution,
-            xi: -0.2,
-            alpha: 0.7,
+            resolution: reference_model.resolution.clone(),
+            // Add noise to distortion parameters
+            xi: reference_model.xi + 0.1,
+            alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
         };
 
-        // Create matrices to store the points
-        let mut points_3d_vec = Vec::new();
-        let mut points_2d_vec = Vec::new();
+        println!("Reference model parameters:");
+        println!(
+            "fx: {}, fy: {}",
+            reference_model.intrinsics.fx, reference_model.intrinsics.fy
+        );
+        println!(
+            "cx: {}, cy: {}",
+            reference_model.intrinsics.cx, reference_model.intrinsics.cy
+        );
+        println!(
+            "xi: {}, alpha: {}",
+            reference_model.xi, reference_model.alpha
+        );
 
-        // Generate synthetic data points
-        for x in (-5..=5).step_by(2) {
-            for y in (-5..=5).step_by(2) {
-                for z in [2, 4, 6] {
-                    let point_3d = Vector3::new(x as f64 * 0.1, y as f64 * 0.1, z as f64);
+        println!("\nNoisy model parameters (before optimization):");
+        println!(
+            "fx: {}, fy: {}",
+            noisy_model.intrinsics.fx, noisy_model.intrinsics.fy
+        );
+        println!(
+            "cx: {}, cy: {}",
+            noisy_model.intrinsics.cx, noisy_model.intrinsics.cy
+        );
+        println!("xi: {}, alpha: {}", noisy_model.xi, noisy_model.alpha);
 
-                    // Project using reference model
-                    if let Ok(point_2d) = reference_model.project(&point_3d) {
-                        points_3d_vec.push(point_3d);
-                        points_2d_vec.push(point_2d);
-                    }
-                }
-            }
-        }
+        // Optimize the model with noise
+        noisy_model.optimize(&points_3d, &points_2d, true).unwrap();
 
-        // Convert vectors to matrices
-        let n_points = points_3d_vec.len();
-        let mut points_3d = Matrix3xX::zeros(n_points);
-        let mut points_2d = Matrix2xX::zeros(n_points);
+        println!("\nOptimized model parameters:");
+        println!(
+            "fx: {}, fy: {}",
+            noisy_model.intrinsics.fx, noisy_model.intrinsics.fy
+        );
+        println!(
+            "cx: {}, cy: {}",
+            noisy_model.intrinsics.cx, noisy_model.intrinsics.cy
+        );
+        println!("xi: {}, alpha: {}", noisy_model.xi, noisy_model.alpha);
 
-        for (i, p3d) in points_3d_vec.iter().enumerate() {
-            points_3d.set_column(i, p3d);
-        }
-
-        for (i, p2d) in points_2d_vec.iter().enumerate() {
-            points_2d.set_column(i, p2d);
-        }
-
-        // Optimize the model
-        model.optimize(&points_3d, &points_2d, false).unwrap();
-
-        // Check that parameters are within reasonable bounds of the reference model
-        assert!((model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 20.0);
-        assert!((model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 20.0);
-        assert!((model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 20.0);
-        assert!((model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 20.0);
-        assert!((model.xi - reference_model.xi).abs() < 0.1);
-        assert!((model.alpha - reference_model.alpha).abs() < 0.1);
+        // Check that parameters have been optimized close to reference values
+        assert!(
+            (noisy_model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 10.0,
+            "fx parameter didn't converge to expected value"
+        );
+        assert!(
+            (noisy_model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 10.0,
+            "fy parameter didn't converge to expected value"
+        );
+        assert!(
+            (noisy_model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 10.0,
+            "cx parameter didn't converge to expected value"
+        );
+        assert!(
+            (noisy_model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 10.0,
+            "cy parameter didn't converge to expected value"
+        );
+        assert!(
+            (noisy_model.xi - reference_model.xi).abs() < 0.05,
+            "xi parameter didn't converge to expected value"
+        );
+        assert!(
+            (noisy_model.alpha - reference_model.alpha).abs() < 0.05,
+            "alpha parameter didn't converge to expected value"
+        );
 
         // Verify that alpha is within bounds (0, 1]
-        assert!(model.alpha > 0.0 && model.alpha <= 1.0);
+        assert!(
+            noisy_model.alpha > 0.0 && noisy_model.alpha <= 1.0,
+            "Alpha parameter out of valid range (0, 1]"
+        );
 
         // Verify that focal lengths are positive
-        assert!(model.intrinsics.fx > 0.0);
-        assert!(model.intrinsics.fy > 0.0);
+        assert!(noisy_model.intrinsics.fx > 0.0, "fx must be positive");
+        assert!(noisy_model.intrinsics.fy > 0.0, "fy must be positive");
     }
 }
