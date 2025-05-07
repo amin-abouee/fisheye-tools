@@ -133,7 +133,7 @@ mod tests {
     fn test_radtan_camera() {
         let model = RadTanModel::load_from_yaml("samples/rad_tan.yaml").unwrap();
         let point_3d = Vector3::new(1.0, 1.0, 3.0);
-        let point_2d = model.project(&point_3d).unwrap();
+        let (point_2d, _) = model.project(&point_3d, false).unwrap();
         assert!(point_2d.x > 0.0);
         assert!(point_2d.y > 0.0);
     }
@@ -142,7 +142,7 @@ mod tests {
     fn test_double_sphere_camera() {
         let model = DoubleSphereModel::load_from_yaml("samples/double_sphere.yaml").unwrap();
         let point_3d = Vector3::new(1.0, 1.0, 3.0);
-        let point_2d = model.project(&point_3d).unwrap();
+        let (point_2d, _) = model.project(&point_3d, false).unwrap();
         assert!(point_2d.x > 0.0);
         assert!(point_2d.y > 0.0);
     }

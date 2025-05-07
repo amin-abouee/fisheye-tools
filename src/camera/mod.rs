@@ -1,4 +1,4 @@
-use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
 // Camera model modules
@@ -64,7 +64,11 @@ impl From<yaml_rust::ScanError> for CameraModelError {
 /// Trait defining the core functionality for camera models
 pub trait CameraModel {
     /// Project a 3D point to 2D image coordinates
-    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError>;
+    fn project(
+        &self,
+        point_3d: &Vector3<f64>,
+        compute_jacobian: bool,
+    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError>;
 
     /// Unproject 2D image coordinates to a 3D ray
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError>;
@@ -104,7 +108,6 @@ pub trait CameraModel {
         points_2d: &Matrix2xX<f64>,
         verbose: bool,
     ) -> Result<(), CameraModelError>;
-
 }
 
 /// Common validation functions for camera parameters

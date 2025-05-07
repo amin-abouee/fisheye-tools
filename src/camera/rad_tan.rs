@@ -1,4 +1,4 @@
-use nalgebra::{Matrix2, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, Matrix2, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -14,7 +14,11 @@ pub struct RadTanModel {
 }
 
 impl CameraModel for RadTanModel {
-    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
+    fn project(
+        &self,
+        point_3d: &Vector3<f64>,
+        _compute_jacobian: bool,
+    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError> {
         // If z is very small, the point is at the camera center
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
@@ -59,7 +63,7 @@ impl CameraModel for RadTanModel {
             return Err(CameraModelError::ProjectionOutSideImage);
         }
 
-        Ok(Vector2::new(u, v))
+        Ok((Vector2::new(u, v), None))
     }
 
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
@@ -510,7 +514,7 @@ mod tests {
         let norm_3d = point_3d.normalize();
 
         // Project the 3D point to pixel coordinates
-        let point_2d = model.project(&point_3d).unwrap();
+        let (point_2d, _) = model.project(&point_3d, false).unwrap();
 
         // Check if the pixel coordinates are within the image bounds
         assert!(point_2d.x >= 0.0 && point_2d.x < model.resolution.width as f64);
@@ -546,7 +550,7 @@ mod tests {
 
         for (i, original_point) in test_points.iter().enumerate() {
             // Project the 3D point to pixel coordinates
-            let pixel_point = match model.project(original_point) {
+            let (pixel_point, _) = match model.project(original_point, false) {
                 Ok(p) => p,
                 Err(e) => {
                     println!(
