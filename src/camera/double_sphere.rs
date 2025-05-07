@@ -1,14 +1,13 @@
+use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use argmin::{
-    core::{CostFunction, Error, Executor, Gradient},
-    solver::{linesearch::MoreThuenteLineSearch, quasinewton::LBFGS},
+    core::{CostFunction, Error, Executor, Gradient, Hessian, State},
+    solver::trustregion::{Dogleg, TrustRegion},
 };
-use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use yaml_rust::YamlLoader;
-
-use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoubleSphereModel {
@@ -21,35 +20,30 @@ pub struct DoubleSphereModel {
 // Cost function for optimization
 #[derive(Clone)]
 struct DoubleSphereOptimizationCost {
-    points_3d: Matrix3xX<f64>,
-    points_2d: Matrix2xX<f64>,
-    // Parameter bounds
-    lower_bounds: Vec<f64>,
-    upper_bounds: Vec<f64>,
+    points3d: Matrix3xX<f64>,
+    points2d: Matrix2xX<f64>,
+}
+
+impl DoubleSphereOptimizationCost {
+    pub fn new(points3d: Matrix3xX<f64>, points2d: Matrix2xX<f64>) -> Self {
+        assert_eq!(points3d.ncols(), points2d.ncols());
+        DoubleSphereOptimizationCost { points3d, points2d }
+    }
+
+    // Helper to unpack parameters
+    fn unpack_params(p: &DVector<f64>) -> (f64, f64, f64, f64, f64, f64) {
+        (p[0], p[1], p[2], p[3], p[4], p[5])
+    }
 }
 
 impl CostFunction for DoubleSphereOptimizationCost {
-    type Param = Vec<f64>;
-    type Output = f64;
+    type Param = DVector<f64>; // [fx, fy, cx, cy, alpha, xi]
+    type Output = f64; // Sum of squared errors
 
     fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        // Apply parameter bounds by projecting parameters to valid range
-        let mut bounded_p = p.clone();
-        for i in 0..p.len() {
-            bounded_p[i] = bounded_p[i]
-                .max(self.lower_bounds[i])
-                .min(self.upper_bounds[i]);
-        }
+        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
+        let mut total_error_sq = 0.0;
 
-        // Extract parameters
-        let fx = bounded_p[0];
-        let fy = bounded_p[1];
-        let cx = bounded_p[2];
-        let cy = bounded_p[3];
-        let xi = bounded_p[4];
-        let alpha = bounded_p[5];
-
-        // Create temporary model with these parameters
         let intrinsics = Intrinsics { fx, fy, cx, cy };
         let resolution = Resolution {
             width: 0,  // Not used in projection
@@ -63,162 +57,104 @@ impl CostFunction for DoubleSphereOptimizationCost {
             alpha,
         };
 
-        // Calculate cost as sum of squared reprojection errors
-        let mut total_cost = 0.0;
+        for i in 0..self.points3d.ncols() {
+            let p3d = Vector3::new(
+                self.points3d[(0, i)],
+                self.points3d[(1, i)],
+                self.points3d[(2, i)],
+            );
+            let p2d_gt = Vector2::new(self.points2d[(0, i)], self.points2d[(1, i)]);
 
-        for (p3d, p2d) in self
-            .points_3d
-            .column_iter()
-            .zip(self.points_2d.column_iter())
-        {
-            match model.project(&Vector3::from(p3d)) {
-                Ok(projected) => {
-                    // let dx = projected.x - p2d[0];
-                    // let dy = projected.y - p2d[1];
-                    // total_cost += dx * dx + dy * dy;
-                    total_cost += (projected - p2d).norm();
-                }
-                Err(_) => {
-                    // Penalize heavily if point cannot be projected
-                    total_cost += 500.0; // Increased penalty for invalid projections
-                }
-            }
+            // The project function now returns a tuple with the projection and optional Jacobian
+            let (p2d_projected, _) = model.project(&p3d, false).unwrap();
+
+            total_error_sq += (p2d_projected - p2d_gt).norm_squared();
         }
 
-        // Add barrier function for parameters near bounds
-        let barrier_weight = 1.0;
-        for i in 0..bounded_p.len() {
-            let dist_to_lower = bounded_p[i] - self.lower_bounds[i];
-            let dist_to_upper = self.upper_bounds[i] - bounded_p[i];
-
-            // Add logarithmic barrier terms
-            if dist_to_lower > 0.0 && dist_to_lower < 1e-3 {
-                total_cost += barrier_weight * (-dist_to_lower.ln());
-            }
-            if dist_to_upper > 0.0 && dist_to_upper < 1e-3 {
-                total_cost += barrier_weight * (-dist_to_upper.ln());
-            }
-        }
-
-        Ok(total_cost)
+        Ok(total_error_sq)
     }
 }
 
 impl Gradient for DoubleSphereOptimizationCost {
-    type Param = Vec<f64>;
-    type Gradient = Vec<f64>;
+    type Param = DVector<f64>;
+    type Gradient = DVector<f64>; // Gradient of the cost function (J^T * r)
 
     fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
-        // Apply parameter bounds by projecting parameters to valid range
-        let mut bounded_p = p.clone();
-        for i in 0..p.len() {
-            bounded_p[i] = bounded_p[i]
-                .max(self.lower_bounds[i])
-                .min(self.upper_bounds[i]);
-        }
+        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
+        let mut grad = DVector::zeros(6);
 
-        // Extract parameters
-        let fx = bounded_p[0];
-        let fy = bounded_p[1];
-        let cx = bounded_p[2];
-        let cy = bounded_p[3];
-        let xi = bounded_p[4];
-        let alpha = bounded_p[5];
+        let intrinsics = Intrinsics { fx, fy, cx, cy };
+        let resolution = Resolution {
+            width: 0,  // Not used in projection
+            height: 0, // Not used in projection
+        };
 
-        // Initialize gradient vector
-        let mut gradient_vec = vec![0.0; 6]; // Use a temporary vec
+        let model = DoubleSphereModel {
+            intrinsics,
+            resolution,
+            xi,
+            alpha,
+        };
 
-        for (p3d, p2d) in self
-            .points_3d
-            .column_iter()
-            .zip(self.points_2d.column_iter())
-        {
-            let x = p3d.x;
-            let y = p3d.y;
-            let z = p3d.z;
+        for i in 0..self.points3d.ncols() {
+            let p3d = &self.points3d.column(i).into_owned();
+            let p2d_gt = &self.points2d.column(i).into_owned();
 
-            let xx = x * x;
-            let yy = y * y;
-            let zz = z * z;
+            let (p2d_projected, jacobian_point_2x6) = model.project(p3d, false).unwrap();
 
-            let r2 = xx + yy;
-            let d1_2 = r2 + zz;
-            let d1 = d1_2.sqrt();
+            if let Some(jacobian) = jacobian_point_2x6 {
+                let residual_2x1 = p2d_projected - p2d_gt;
 
-            // Calculate projection and Jacobian
-            let k = xi * d1 + z;
-            let kk = k * k;
-            let d2_2 = r2 + kk;
-            let d2 = d2_2.sqrt();
-
-            let norm = alpha * d2 + (1.0 - alpha) * k;
-            let norm2 = norm * norm;
-
-            // Skip points that would cause numerical issues
-            if norm.abs() < 1e-6 {
-                continue;
-            }
-
-            let mx = x / norm;
-            let my = y / norm;
-
-            // Projected point
-            let proj_x = fx * mx + cx;
-            let proj_y = fy * my + cy;
-
-            // Residuals
-            let dx = proj_x - p2d.x;
-            let dy = proj_y - p2d.y;
-
-            // Jacobian components for intrinsics
-            let mut d_proj_d_param = vec![
-                vec![mx, 0.0, 1.0, 0.0, 0.0, 0.0],
-                vec![0.0, my, 0.0, 1.0, 0.0, 0.0],
-            ];
-
-            // Improved Jacobian entries for xi and alpha
-            // Derivative of mx, my with respect to xi
-            let d_norm_d_xi = alpha * k * d1 / d2;
-            let d_mx_d_xi = -x * d_norm_d_xi / norm2;
-            let d_my_d_xi = -y * d_norm_d_xi / norm2;
-
-            // Derivative of mx, my with respect to alpha
-            let d_norm_d_alpha = d2 - k;
-            let d_mx_d_alpha = -x * d_norm_d_alpha / norm2;
-            let d_my_d_alpha = -y * d_norm_d_alpha / norm2;
-
-            d_proj_d_param[0][4] = fx * d_mx_d_xi;
-            d_proj_d_param[1][4] = fy * d_my_d_xi;
-            d_proj_d_param[0][5] = fx * d_mx_d_alpha;
-            d_proj_d_param[1][5] = fy * d_my_d_alpha;
-
-            // Update gradient with this point's contribution
-            for i in 0..6 {
-                gradient_vec[i] += 2.0 * (dx * d_proj_d_param[0][i] + dy * d_proj_d_param[1][i]);
+                // grad += J_i^T * r_i
+                grad += jacobian.transpose() * residual_2x1;
             }
         }
+        Ok(grad)
+    }
+}
 
-        // Add gradient of barrier function for parameters near bounds
-        let barrier_weight = 1.0;
-        for i in 0..bounded_p.len() {
-            let dist_to_lower = bounded_p[i] - self.lower_bounds[i];
-            let dist_to_upper = self.upper_bounds[i] - bounded_p[i];
+// For Gauss-Newton like behavior in TrustRegion (J^T J approximation for Hessian)
+impl Hessian for DoubleSphereOptimizationCost {
+    type Param = DVector<f64>;
+    type Hessian = DMatrix<f64>; // J^T * J
 
-            // Add gradient of logarithmic barrier terms
-            if dist_to_lower > 0.0 && dist_to_lower < 1e-3 {
-                gradient_vec[i] -= barrier_weight / dist_to_lower;
-            }
-            if dist_to_upper > 0.0 && dist_to_upper < 1e-3 {
-                gradient_vec[i] += barrier_weight / dist_to_upper;
+    fn hessian(&self, p: &Self::Param) -> Result<Self::Hessian, Error> {
+        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
+        let mut jtj = DMatrix::zeros(6, 6);
+
+        let intrinsics = Intrinsics { fx, fy, cx, cy };
+        let resolution = Resolution {
+            width: 0,  // Not used in projection
+            height: 0, // Not used in projection
+        };
+
+        let model = DoubleSphereModel {
+            intrinsics,
+            resolution,
+            xi,
+            alpha,
+        };
+
+        for i in 0..self.points3d.ncols() {
+            let p3d = &self.points3d.column(i).into_owned();
+            // We only need the Jacobian for J^T J
+            let (_, jacobian_point_2x6) = model.project(p3d, false).unwrap();
+
+            // Check if jacobian_point_2x6 is Some before using it
+            if let Some(jacobian) = jacobian_point_2x6 {
+                jtj += jacobian.transpose() * jacobian;
             }
         }
-
-        Ok(gradient_vec)
+        Ok(jtj)
     }
 }
 
 impl CameraModel for DoubleSphereModel {
-    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
+    fn project(
+        &self,
+        point_3d: &Vector3<f64>,
+        compute_jacobian: bool,
+    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError> {
         const PRECISION: f64 = 1e-3;
 
         let x = point_3d.x;
@@ -237,11 +173,44 @@ impl CameraModel for DoubleSphereModel {
             return Err(CameraModelError::PointIsOutSideImage);
         }
 
-        // Project the point
-        let projected_x = self.intrinsics.fx * (x / denom) + self.intrinsics.cx;
-        let projected_y = self.intrinsics.fy * (y / denom) + self.intrinsics.cy;
+        let mx = x / denom;
+        let my = y / denom;
 
-        Ok(Vector2::new(projected_x, projected_y))
+        // Project the point
+        let projected_x = self.intrinsics.fx * (mx) + self.intrinsics.cx;
+        let projected_y = self.intrinsics.fy * (my) + self.intrinsics.cy;
+
+        let jacobian = if compute_jacobian {
+            let mut d_proj_d_param = DMatrix::<f64>::zeros(2, 6);
+            d_proj_d_param[(0, 0)] = mx;
+            d_proj_d_param[(0, 2)] = 1.0;
+            d_proj_d_param[(1, 1)] = my;
+            d_proj_d_param[(1, 3)] = 1.0;
+
+            let denom2 = denom * denom;
+
+            // Improved Jacobian entries for xi and alpha
+            // Derivative of mx, my with respect to xi
+            let d_norm_d_xi = self.alpha * gamma * d1 / d2;
+            let d_mx_d_xi = -x * d_norm_d_xi / denom2;
+            let d_my_d_xi = -y * d_norm_d_xi / denom2;
+
+            // Derivative of mx, my with respect to alpha
+            let d_norm_d_alpha = d2 - gamma;
+            let d_mx_d_alpha = -x * d_norm_d_alpha / denom2;
+            let d_my_d_alpha = -y * d_norm_d_alpha / denom2;
+
+            d_proj_d_param[(0, 4)] = self.intrinsics.fx * d_mx_d_xi;
+            d_proj_d_param[(1, 4)] = self.intrinsics.fy * d_my_d_xi;
+            d_proj_d_param[(0, 5)] = self.intrinsics.fx * d_mx_d_alpha;
+            d_proj_d_param[(1, 5)] = self.intrinsics.fy * d_my_d_alpha;
+
+            Some(d_proj_d_param)
+        } else {
+            None
+        };
+
+        Ok((Vector2::new(projected_x, projected_y), jacobian))
     }
 
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
@@ -513,6 +482,8 @@ impl CameraModel for DoubleSphereModel {
             ));
         }
 
+        let cost_function = DoubleSphereOptimizationCost::new(points_3d.clone(), points_2d.clone());
+
         // Initial parameters as Vec<f64> instead of SVector
         let param = vec![
             self.intrinsics.fx,
@@ -523,96 +494,50 @@ impl CameraModel for DoubleSphereModel {
             self.alpha,
         ];
 
-        // Define parameter bounds as Vec<f64> instead of SVector
-        // Lower bounds: fx, fy > 0, cx, cy can be anywhere, xi can be anywhere, alpha in (0,1]
-        let lower_bounds = vec![
-            1.0,               // fx > 0
-            1.0,               // fy > 0
-            f64::NEG_INFINITY, // cx can be anywhere
-            f64::NEG_INFINITY, // cy can be anywhere
-            f64::NEG_INFINITY, // xi can be anywhere
-            1e-6,              // alpha > 0 (small positive value)
-        ];
+        let init_param: DVector<f64> = DVector::from_vec(param);
 
-        // Upper bounds: fx, fy, cx, cy can be large, xi can be anywhere, alpha <= 1.0
-        let upper_bounds = vec![
-            f64::INFINITY, // fx can be large
-            f64::INFINITY, // fy can be large
-            f64::INFINITY, // cx can be large
-            f64::INFINITY, // cy can be large
-            f64::INFINITY, // xi can be anywhere
-            1.0,           // alpha <= 1.0
-        ];
+        // Define reference bounds for parameters (used in validation)
+        // fx, fy > 0
+        // 0 < alpha < 1
+        // xi can be any value
 
-        // Setup cost function with bounds
-        let cost_function = DoubleSphereOptimizationCost {
-            points_3d: points_3d.clone(),
-            points_2d: points_2d.clone(),
-            lower_bounds: lower_bounds.clone(),
-            upper_bounds: upper_bounds.clone(),
-        };
+        // Configure the subproblem solver using Dogleg method
+        let subproblem_solver = Dogleg::new();
+        // Dogleg doesn't support bounds directly, we'll handle bounds in the cost function
+        // For reference: the bounds were for fx,fy > 0, 0 < alpha < 1, and any xi
 
-        // Setup L-BFGS solver with line search
-        let linesearch = MoreThuenteLineSearch::new();
-        let solver = LBFGS::new(linesearch, 20); // Increased history size for better convergence
+        // Configure the TrustRegion solver
+        // let solver = TrustRegion::new(subproblem_solver);
+        // solver.set_radius_update(TrustRegionRadius::new().gamma_inc(2.5).gamma_dec(0.25)); // Optional: tune radius update
 
-        // Create executor
-        let mut executor = Executor::new(cost_function.clone(), solver);
+        let executor_builder = Executor::new(cost_function, subproblem_solver)
+            .configure(|state| state.param(init_param).max_iters(100)); // Set initial param and max iterations
 
-        // Configure verbosity
         if verbose {
-            // Print output to console directly for simplicity
             println!("Starting optimization...");
+            // let logger = SlogLogger::term();
+            // executor_builder = executor_builder
+            //     .add_observer(logger, argmin::core::observers::ObserverMode::Always);
         }
 
-        // Set initial parameters and optimization options
-        executor = executor.configure(|state| {
-            state
-                .param(param)
-                .max_iters(100) // Maximum number of iterations
-                .target_cost(1e-8) // Target cost function value
-        });
-
-        // Run optimization
-        let res = executor
+        let res = executor_builder
             .run()
             .map_err(|e| CameraModelError::NumericalError(e.to_string()))?;
 
-        // Get optimized parameters
-        let opt_param = res.state.best_param.ok_or_else(|| {
-            CameraModelError::NumericalError("Optimization failed to find parameters".to_string())
-        })?;
-
-        // Log optimization results if verbose
         if verbose {
-            println!("Optimization completed with {} iterations", res.state.iter);
-            println!("Final cost: {}", res.state.cost);
-            println!("Optimization process complete");
+            println!("Optimization finished: \n{}", res);
+            println!("Termination status: {:?}", res.state().termination_status);
         }
 
-        // Apply bounds to the final parameters (manually since we don't have zip_map)
-        let mut final_params = opt_param.clone();
-        for i in 0..final_params.len() {
-            let lower = if i < lower_bounds.len() {
-                lower_bounds[i]
-            } else {
-                f64::NEG_INFINITY
-            };
-            let upper = if i < upper_bounds.len() {
-                upper_bounds[i]
-            } else {
-                f64::INFINITY
-            };
-            final_params[i] = final_params[i].max(lower).min(upper);
-        }
+        let best_params_dvec = res.state().get_best_param().unwrap().clone();
 
         // Update model parameters from the bounded final parameters
-        self.intrinsics.fx = final_params[0];
-        self.intrinsics.fy = final_params[1];
-        self.intrinsics.cx = final_params[2];
-        self.intrinsics.cy = final_params[3];
-        self.xi = final_params[4];
-        self.alpha = final_params[5];
+        self.intrinsics.fx = best_params_dvec[0];
+        self.intrinsics.fy = best_params_dvec[1];
+        self.intrinsics.cx = best_params_dvec[2];
+        self.intrinsics.cy = best_params_dvec[3];
+        self.xi = best_params_dvec[4];
+        self.alpha = best_params_dvec[5];
 
         // Validate the optimized parameters
         self.validate_params()?;
@@ -687,7 +612,7 @@ mod tests {
         let norm_3d = point_3d.normalize();
 
         // Project the 3D point to pixel coordinates
-        let point_2d = model.project(&point_3d).unwrap();
+        let (point_2d, _) = model.project(&point_3d, false).unwrap();
 
         // Check if the pixel coordinates are within the image bounds
         assert!(point_2d.x >= 0.0 && point_2d.x < model.resolution.width as f64);
@@ -717,15 +642,15 @@ mod tests {
         let mut noisy_model = DoubleSphereModel {
             intrinsics: Intrinsics {
                 // Add some noise to the intrinsic parameters (±5-10%)
-                fx: reference_model.intrinsics.fx + 2.5,
-                fy: reference_model.intrinsics.fy + 2.5,
-                cx: reference_model.intrinsics.cx + 3.0,
-                cy: reference_model.intrinsics.cy - 3.0,
+                fx: reference_model.intrinsics.fx + 2.95,
+                fy: reference_model.intrinsics.fy * 1.08,
+                cx: reference_model.intrinsics.cx + 15.0,
+                cy: reference_model.intrinsics.cy - 12.0,
             },
             resolution: reference_model.resolution.clone(),
             // Add noise to distortion parameters
             xi: reference_model.xi + 0.1,
-            alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
+            alpha: (reference_model.alpha * 0.85).max(0.1).min(0.99),
         };
 
         println!("Reference model parameters:");
