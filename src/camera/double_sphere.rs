@@ -1,8 +1,9 @@
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use argmin::{
-    core::{CostFunction, Error, Executor, Gradient, Hessian, State},
+    core::{observers::ObserverMode, CostFunction, Error, Executor, Gradient, Hessian, State},
     solver::trustregion::{Dogleg, TrustRegion},
 };
+use argmin_observer_slog::SlogLogger;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -507,17 +508,18 @@ impl CameraModel for DoubleSphereModel {
         // For reference: the bounds were for fx,fy > 0, 0 < alpha < 1, and any xi
 
         // Configure the TrustRegion solver
-        // let solver = TrustRegion::new(subproblem_solver);
+        let solver = TrustRegion::new(subproblem_solver);
         // solver.set_radius_update(TrustRegionRadius::new().gamma_inc(2.5).gamma_dec(0.25)); // Optional: tune radius update
 
-        let executor_builder = Executor::new(cost_function, subproblem_solver)
-            .configure(|state| state.param(init_param).max_iters(100)); // Set initial param and max iterations
+        // let executor_builder = Executor::new(cost_function, solver)
+        // .configure(|state| state.param(init_param).max_iters(100)); // Set initial param and max iterations
+
+        let executor_builder = Executor::new(cost_function, solver)
+            .configure(|state| state.param(init_param).max_iters(100))
+            .add_observer(SlogLogger::term(), ObserverMode::Always);
 
         if verbose {
             println!("Starting optimization...");
-            // let logger = SlogLogger::term();
-            // executor_builder = executor_builder
-            //     .add_observer(logger, argmin::core::observers::ObserverMode::Always);
         }
 
         let res = executor_builder
