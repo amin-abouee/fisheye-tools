@@ -10,14 +10,6 @@ use std::fs;
 use std::io::Write;
 use yaml_rust::YamlLoader;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoubleSphereModel {
-    pub intrinsics: Intrinsics,
-    pub resolution: Resolution,
-    pub xi: f64,
-    pub alpha: f64,
-}
-
 // Cost function for optimization
 #[derive(Clone)]
 struct DoubleSphereOptimizationCost {
@@ -59,15 +51,11 @@ impl CostFunction for DoubleSphereOptimizationCost {
         };
 
         for i in 0..self.points3d.ncols() {
-            let p3d = Vector3::new(
-                self.points3d[(0, i)],
-                self.points3d[(1, i)],
-                self.points3d[(2, i)],
-            );
-            let p2d_gt = Vector2::new(self.points2d[(0, i)], self.points2d[(1, i)]);
+            let p3d = &self.points3d.column(i).into_owned();
+            let p2d_gt = &self.points2d.column(i).into_owned();
 
             // The project function now returns a tuple with the projection and optional Jacobian
-            let (p2d_projected, _) = model.project(&p3d, false).unwrap();
+            let (p2d_projected, _) = model.project(p3d, false).unwrap();
 
             total_error_sq += (p2d_projected - p2d_gt).norm_squared();
         }
@@ -150,6 +138,35 @@ impl Hessian for DoubleSphereOptimizationCost {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoubleSphereModel {
+    pub intrinsics: Intrinsics,
+    pub resolution: Resolution,
+    pub xi: f64,
+    pub alpha: f64,
+}
+
+impl DoubleSphereModel {
+    fn check_proj_condition(&self, z: f64, d1: f64) -> bool {
+        let w1 = match self.alpha <= 0.5 {
+            true => self.alpha / (1.0 - self.alpha),
+            false => (1.0 - self.alpha) / self.alpha,
+        };
+        let w2 = (w1 + self.xi) / (2.0 * w1 * self.xi + self.xi * self.xi + 1.0).sqrt();
+        z > -w2 * d1
+    }
+
+    fn check_unproj_condition(&self, r_squared: f64) -> bool {
+        let mut condition = true;
+        if self.alpha > 0.5 {
+            if r_squared > 1.0 / (2.0 * self.alpha - 1.0) {
+                condition = false;
+            }
+        }
+        condition
+    }
+}
+
 impl CameraModel for DoubleSphereModel {
     fn project(
         &self,
@@ -170,7 +187,7 @@ impl CameraModel for DoubleSphereModel {
         let denom = self.alpha * d2 + (1.0 - self.alpha) * gamma;
 
         // Check if the projection is valid
-        if denom < PRECISION {
+        if denom < PRECISION || !self.check_proj_condition(z, d1) {
             return Err(CameraModelError::PointIsOutSideImage);
         }
 
@@ -232,7 +249,7 @@ impl CameraModel for DoubleSphereModel {
         let r_squared = (mx * mx) + (my * my);
 
         // Check if we can unproject this point
-        if alpha != 0.0 && (2.0 * alpha - 1.0) * r_squared >= 1.0 {
+        if alpha != 0.0 && !self.check_unproj_condition(r_squared) {
             return Err(CameraModelError::PointIsOutSideImage);
         }
 
