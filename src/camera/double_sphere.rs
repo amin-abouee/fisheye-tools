@@ -200,28 +200,28 @@ impl CameraModel for DoubleSphereModel {
 
         let jacobian = if compute_jacobian {
             let mut d_proj_d_param = DMatrix::<f64>::zeros(2, 6);
-            d_proj_d_param[(0, 0)] = mx;
-            d_proj_d_param[(0, 2)] = 1.0;
-            d_proj_d_param[(1, 1)] = my;
-            d_proj_d_param[(1, 3)] = 1.0;
 
-            let denom2 = denom * denom;
+            let u_cx = projected_x - self.intrinsics.cx;
+            let v_cy = projected_y - self.intrinsics.cy;
+            let m_alpha = 1.0 - self.alpha;
 
-            // Improved Jacobian entries for xi and alpha
-            // Derivative of mx, my with respect to xi
-            let d_norm_d_xi = self.alpha * gamma * d1 / d2;
-            let d_mx_d_xi = -x * d_norm_d_xi / denom2;
-            let d_my_d_xi = -y * d_norm_d_xi / denom2;
+            // Set Jacobian entries for intrinsics
+            d_proj_d_param[(0, 0)] = mx; // ∂residual_x / ∂fx
+            d_proj_d_param[(0, 1)] = 0.0; // ∂residual_y / ∂fx
+            d_proj_d_param[(1, 0)] = 0.0; // ∂residual_x / ∂fy
+            d_proj_d_param[(1, 1)] = my; // ∂residual_y / ∂fy
 
-            // Derivative of mx, my with respect to alpha
-            let d_norm_d_alpha = d2 - gamma;
-            let d_mx_d_alpha = -x * d_norm_d_alpha / denom2;
-            let d_my_d_alpha = -y * d_norm_d_alpha / denom2;
+            d_proj_d_param[(0, 2)] = denom; // ∂residual_x / ∂cx
+            d_proj_d_param[(0, 3)] = 0.0; // ∂residual_y / ∂cx
+            d_proj_d_param[(1, 2)] = 0.0; // ∂residual_x / ∂cy
+            d_proj_d_param[(1, 3)] = denom; // ∂residual_y / ∂cy
 
-            d_proj_d_param[(0, 4)] = self.intrinsics.fx * d_mx_d_xi;
-            d_proj_d_param[(1, 4)] = self.intrinsics.fy * d_my_d_xi;
-            d_proj_d_param[(0, 5)] = self.intrinsics.fx * d_mx_d_alpha;
-            d_proj_d_param[(1, 5)] = self.intrinsics.fy * d_my_d_alpha;
+            d_proj_d_param[(0, 4)] = (gamma - d2) * u_cx; // ∂residual_x / ∂alpha
+            d_proj_d_param[(1, 4)] = (gamma - d2) * v_cy; // ∂residual_y / ∂alpha
+
+            let coeff = (self.alpha * d1 * gamma) / d2 + (m_alpha * d1);
+            d_proj_d_param[(0, 5)] = -u_cx * coeff; // ∂residual_x / ∂xi
+            d_proj_d_param[(1, 5)] = -v_cy * coeff; // ∂residual_y / ∂xi
 
             Some(d_proj_d_param)
         } else {
