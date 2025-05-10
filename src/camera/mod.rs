@@ -73,8 +73,8 @@ pub trait CameraModel {
     /// Unproject 2D image coordinates to a 3D ray
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError>;
 
-    /// Initialize the camera model with intrinsics and 2D-3D correspondences
-    fn initialize(
+    /// Linear estimation of the camera model with intrinsics and 2D-3D correspondences
+    fn linear_estimation(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
         points_2d: &Matrix2xX<f64>,

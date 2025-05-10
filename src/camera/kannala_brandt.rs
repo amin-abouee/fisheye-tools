@@ -117,7 +117,7 @@ impl CameraModel for KannalaBrandtModel {
         self.coefficients.to_vec()
     }
 
-    fn initialize(
+    fn linear_estimation(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
         _points_2d: &Matrix2xX<f64>,

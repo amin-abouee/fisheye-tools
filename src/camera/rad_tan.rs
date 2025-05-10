@@ -350,7 +350,7 @@ impl CameraModel for RadTanModel {
         self.distortion.to_vec()
     }
 
-    fn initialize(
+    fn linear_estimation(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
         points_2d: &Matrix2xX<f64>,

@@ -56,7 +56,7 @@ fn create_output_model(
     let output_model: Box<dyn CameraModel> = match output_model_type {
         "rad_tan" => {
             println!("Successfully loaded input model: RadTan");
-            Box::new(RadTanModel::initialize(
+            Box::new(RadTanModel::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
                 &points_2d,
@@ -65,7 +65,7 @@ fn create_output_model(
         }
         "double_sphere" => {
             println!("Successfully loaded input model: DoubleSphere");
-            Box::new(DoubleSphereModel::initialize(
+            Box::new(DoubleSphereModel::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
                 &points_2d,

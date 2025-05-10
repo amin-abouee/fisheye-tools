@@ -165,7 +165,7 @@ impl CameraModel for PinholeModel {
         vec![]
     }
 
-    fn initialize(
+    fn linear_estimation(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
         _points_2d: &nalgebra::Matrix2xX<f64>,
