@@ -3,12 +3,11 @@ use argmin::{
     core::{observers::ObserverMode, CostFunction, Error, Executor, Gradient, Hessian, State},
     solver::trustregion::{Dogleg, TrustRegion},
 };
-use argmin_math::ArgminL1Norm;
 use argmin_observer_slog::SlogLogger;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::Write;
-use std::{fs, ptr::with_exposed_provenance_mut};
 use yaml_rust::YamlLoader;
 
 // Cost function for optimization
