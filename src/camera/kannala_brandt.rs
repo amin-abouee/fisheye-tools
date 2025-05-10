@@ -1,4 +1,4 @@
-use nalgebra::{DMatrix, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use yaml_rust::YamlLoader;
@@ -13,6 +13,20 @@ pub struct KannalaBrandtModel {
 }
 
 impl CameraModel for KannalaBrandtModel {
+    fn initialize(&mut self, parameters: &DVector<f64>) -> Result<(), CameraModelError> {
+        self.intrinsics = Intrinsics {
+            fx: parameters[0],
+            fy: parameters[1],
+            cx: parameters[2],
+            cy: parameters[3],
+        };
+        self.resolution = Resolution {
+            width: 0,
+            height: 0,
+        };
+        Ok(())
+    }
+
     fn project(
         &self,
         point_3d: &Vector3<f64>,

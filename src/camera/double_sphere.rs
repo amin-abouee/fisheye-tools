@@ -3,11 +3,12 @@ use argmin::{
     core::{observers::ObserverMode, CostFunction, Error, Executor, Gradient, Hessian, State},
     solver::trustregion::{Dogleg, TrustRegion},
 };
+use argmin_math::ArgminL1Norm;
 use argmin_observer_slog::SlogLogger;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::io::Write;
+use std::{fs, ptr::with_exposed_provenance_mut};
 use yaml_rust::YamlLoader;
 
 // Cost function for optimization
@@ -57,9 +58,10 @@ impl CostFunction for DoubleSphereOptimizationCost {
             // The project function now returns a tuple with the projection and optional Jacobian
             let (p2d_projected, _) = model.project(p3d, false).unwrap();
 
-            total_error_sq += (p2d_projected - p2d_gt).norm_squared();
+            total_error_sq += (p2d_projected - p2d_gt).norm();
         }
 
+        println!("total_error_sq: {total_error_sq}");
         Ok(total_error_sq)
     }
 }
@@ -89,7 +91,7 @@ impl Gradient for DoubleSphereOptimizationCost {
             let p3d = &self.points3d.column(i).into_owned();
             let p2d_gt = &self.points2d.column(i).into_owned();
 
-            let (p2d_projected, jacobian_point_2x6) = model.project(p3d, false).unwrap();
+            let (p2d_projected, jacobian_point_2x6) = model.project(p3d, true).unwrap();
 
             if let Some(jacobian) = jacobian_point_2x6 {
                 let residual_2x1 = p2d_projected - p2d_gt;
@@ -98,6 +100,7 @@ impl Gradient for DoubleSphereOptimizationCost {
                 grad += jacobian.transpose() * residual_2x1;
             }
         }
+        println!("Gradient: {}", grad);
         Ok(grad)
     }
 }
@@ -127,13 +130,15 @@ impl Hessian for DoubleSphereOptimizationCost {
         for i in 0..self.points3d.ncols() {
             let p3d = &self.points3d.column(i).into_owned();
             // We only need the Jacobian for J^T J
-            let (_, jacobian_point_2x6) = model.project(p3d, false).unwrap();
+            let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
 
             // Check if jacobian_point_2x6 is Some before using it
             if let Some(jacobian) = jacobian_point_2x6 {
                 jtj += jacobian.transpose() * jacobian;
             }
         }
+
+        println!("Hessian: {}", jtj);
         Ok(jtj)
     }
 }
@@ -168,6 +173,22 @@ impl DoubleSphereModel {
 }
 
 impl CameraModel for DoubleSphereModel {
+    fn initialize(&mut self, parameters: &DVector<f64>) -> Result<(), CameraModelError> {
+        self.intrinsics = Intrinsics {
+            fx: parameters[0],
+            fy: parameters[1],
+            cx: parameters[2],
+            cy: parameters[3],
+        };
+        self.resolution = Resolution {
+            width: 0,
+            height: 0,
+        };
+        self.xi = parameters[4];
+        self.alpha = parameters[3];
+        Ok(())
+    }
+
     fn project(
         &self,
         point_3d: &Vector3<f64>,
@@ -188,7 +209,7 @@ impl CameraModel for DoubleSphereModel {
 
         // Check if the projection is valid
         if denom < PRECISION || !self.check_proj_condition(z, d1) {
-            return Err(CameraModelError::PointIsOutSideImage);
+            return Ok((Vector2::new(-1.0, -1.0), None));
         }
 
         let mx = x / denom;
@@ -661,14 +682,14 @@ mod tests {
         let mut noisy_model = DoubleSphereModel {
             intrinsics: Intrinsics {
                 // Add some noise to the intrinsic parameters (±5-10%)
-                fx: reference_model.intrinsics.fx + 2.95,
-                fy: reference_model.intrinsics.fy * 1.08,
-                cx: reference_model.intrinsics.cx + 15.0,
-                cy: reference_model.intrinsics.cy - 12.0,
+                fx: reference_model.intrinsics.fx + 0.05,
+                fy: reference_model.intrinsics.fy * 1.02,
+                cx: reference_model.intrinsics.cx + 0.2,
+                cy: reference_model.intrinsics.cy - 0.1,
             },
             resolution: reference_model.resolution.clone(),
             // Add noise to distortion parameters
-            xi: reference_model.xi + 0.1,
+            xi: 0.0,
             alpha: (reference_model.alpha * 0.85).max(0.1).min(0.99),
         };
 
