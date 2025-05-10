@@ -226,10 +226,10 @@ impl CameraModel for DoubleSphereModel {
             let m_alpha = 1.0 - self.alpha;
 
             // Set Jacobian entries for intrinsics
-            d_proj_d_param[(0, 0)] = mx; // ∂residual_x / ∂fx
+            d_proj_d_param[(0, 0)] = x; // ∂residual_x / ∂fx
             d_proj_d_param[(0, 1)] = 0.0; // ∂residual_y / ∂fx
             d_proj_d_param[(1, 0)] = 0.0; // ∂residual_x / ∂fy
-            d_proj_d_param[(1, 1)] = my; // ∂residual_y / ∂fy
+            d_proj_d_param[(1, 1)] = y; // ∂residual_y / ∂fy
 
             d_proj_d_param[(0, 2)] = denom; // ∂residual_x / ∂cx
             d_proj_d_param[(0, 3)] = 0.0; // ∂residual_y / ∂cx
