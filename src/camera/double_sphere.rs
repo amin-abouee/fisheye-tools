@@ -1,7 +1,10 @@
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use argmin::{
-    core::{observers::ObserverMode, CostFunction, Error, Executor, Gradient, Hessian, State},
-    solver::trustregion::{Dogleg, TrustRegion},
+    core::{
+        observers::ObserverMode, CostFunction, Error, Executor, Gradient, Hessian, Jacobian,
+        Operator, State,
+    },
+    solver::gaussnewton::GaussNewton,
 };
 use argmin_observer_slog::SlogLogger;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
@@ -29,6 +32,88 @@ impl DoubleSphereOptimizationCost {
     }
 }
 
+// Implement Operator trait for Gauss-Newton
+impl Operator for DoubleSphereOptimizationCost {
+    type Param = DVector<f64>; // [fx, fy, cx, cy, alpha, xi]
+    type Output = DVector<f64>; // Residuals vector
+
+    fn apply(&self, p: &Self::Param) -> Result<Self::Output, Error> {
+        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
+        let num_points = self.points3d.ncols();
+        let mut residuals = DVector::zeros(num_points * 2);
+
+        let intrinsics = Intrinsics { fx, fy, cx, cy };
+        let resolution = Resolution {
+            width: 0,  // Not used in projection
+            height: 0, // Not used in projection
+        };
+
+        let model = DoubleSphereModel {
+            intrinsics,
+            resolution,
+            xi,
+            alpha,
+        };
+
+        for i in 0..num_points {
+            let p3d = &self.points3d.column(i).into_owned();
+            let p2d_gt = &self.points2d.column(i).into_owned();
+
+            let (p2d_projected, _) = model.project(p3d, false).unwrap();
+
+            // Each point contributes 2 residuals (x and y dimensions)
+            residuals[i * 2] = p2d_projected.x - p2d_gt.x;
+            residuals[i * 2 + 1] = p2d_projected.y - p2d_gt.y;
+        }
+
+        // println!("residuals: {residuals}");
+
+        Ok(residuals)
+    }
+}
+
+// Implement Jacobian trait for Gauss-Newton
+impl Jacobian for DoubleSphereOptimizationCost {
+    type Param = DVector<f64>;
+    type Jacobian = DMatrix<f64>;
+
+    fn jacobian(&self, p: &Self::Param) -> Result<Self::Jacobian, Error> {
+        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
+        let num_points = self.points3d.ncols();
+        let mut jacobian = DMatrix::zeros(num_points * 2, 6); // 2 residuals per point, 6 parameters
+
+        let intrinsics = Intrinsics { fx, fy, cx, cy };
+        let resolution = Resolution {
+            width: 0,  // Not used in projection
+            height: 0, // Not used in projection
+        };
+
+        let model = DoubleSphereModel {
+            intrinsics,
+            resolution,
+            xi,
+            alpha,
+        };
+
+        for i in 0..num_points {
+            let p3d = &self.points3d.column(i).into_owned();
+
+            // Get Jacobian for this point (2x6 matrix)
+            let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
+
+            if let Some(jac) = jacobian_point_2x6 {
+                // Copy the 2x6 Jacobian for this point into the overall Jacobian matrix
+                jacobian.view_mut((i * 2, 0), (2, 6)).copy_from(&jac);
+            }
+        }
+
+        // println!("jacobian matrix: {jacobian}");
+
+        Ok(jacobian)
+    }
+}
+
+// Keep existing CostFunction implementation
 impl CostFunction for DoubleSphereOptimizationCost {
     type Param = DVector<f64>; // [fx, fy, cx, cy, alpha, xi]
     type Output = f64; // Sum of squared errors
@@ -65,6 +150,7 @@ impl CostFunction for DoubleSphereOptimizationCost {
     }
 }
 
+// Keep existing Gradient implementation
 impl Gradient for DoubleSphereOptimizationCost {
     type Param = DVector<f64>;
     type Gradient = DVector<f64>; // Gradient of the cost function (J^T * r)
@@ -104,7 +190,7 @@ impl Gradient for DoubleSphereOptimizationCost {
     }
 }
 
-// For Gauss-Newton like behavior in TrustRegion (J^T J approximation for Hessian)
+// Keep existing Hessian implementation
 impl Hessian for DoubleSphereOptimizationCost {
     type Param = DVector<f64>;
     type Hessian = DMatrix<f64>; // J^T * J
@@ -208,7 +294,7 @@ impl CameraModel for DoubleSphereModel {
 
         // Check if the projection is valid
         if denom < PRECISION || !self.check_proj_condition(z, d1) {
-            return Ok((Vector2::new(-1.0, -1.0), None));
+            return Ok((Vector2::new(-1.0, -1.0), Some(DMatrix::<f64>::zeros(2, 6))));
         }
 
         let mx = x / denom;
@@ -522,41 +608,28 @@ impl CameraModel for DoubleSphereModel {
 
         let cost_function = DoubleSphereOptimizationCost::new(points_3d.clone(), points_2d.clone());
 
-        // Initial parameters as Vec<f64> instead of SVector
+        // Initial parameters
         let param = vec![
             self.intrinsics.fx,
             self.intrinsics.fy,
             self.intrinsics.cx,
             self.intrinsics.cy,
-            self.xi,
             self.alpha,
+            self.xi,
         ];
 
         let init_param: DVector<f64> = DVector::from_vec(param);
 
-        // Define reference bounds for parameters (used in validation)
-        // fx, fy > 0
-        // 0 < alpha < 1
-        // xi can be any value
+        // Configure the Gauss-Newton solver
+        let solver = GaussNewton::new();
 
-        // Configure the subproblem solver using Dogleg method
-        let subproblem_solver = Dogleg::new();
-        // Dogleg doesn't support bounds directly, we'll handle bounds in the cost function
-        // For reference: the bounds were for fx,fy > 0, 0 < alpha < 1, and any xi
-
-        // Configure the TrustRegion solver
-        let solver = TrustRegion::new(subproblem_solver);
-        // solver.set_radius_update(TrustRegionRadius::new().gamma_inc(2.5).gamma_dec(0.25)); // Optional: tune radius update
-
-        // let executor_builder = Executor::new(cost_function, solver)
-        // .configure(|state| state.param(init_param).max_iters(100)); // Set initial param and max iterations
-
+        // Setup executor with the solver and cost function
         let executor_builder = Executor::new(cost_function, solver)
             .configure(|state| state.param(init_param).max_iters(100))
             .add_observer(SlogLogger::term(), ObserverMode::Always);
 
         if verbose {
-            println!("Starting optimization...");
+            println!("Starting optimization with Gauss-Newton...");
         }
 
         let res = executor_builder
@@ -570,13 +643,13 @@ impl CameraModel for DoubleSphereModel {
 
         let best_params_dvec = res.state().get_best_param().unwrap().clone();
 
-        // Update model parameters from the bounded final parameters
+        // Update model parameters from the final parameters
         self.intrinsics.fx = best_params_dvec[0];
         self.intrinsics.fy = best_params_dvec[1];
         self.intrinsics.cx = best_params_dvec[2];
         self.intrinsics.cy = best_params_dvec[3];
-        self.xi = best_params_dvec[4];
-        self.alpha = best_params_dvec[5];
+        self.alpha = best_params_dvec[4];
+        self.xi = best_params_dvec[5];
 
         // Validate the optimized parameters
         self.validate_params()?;
@@ -673,7 +746,7 @@ mod tests {
         let reference_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
 
         // Use geometry::sample_points to generate a set of 2D-3D point correspondences
-        let n = 100;
+        let n = 500;
         let (points_2d, points_3d) =
             crate::geometry::sample_points(Some(&reference_model), n).unwrap();
 
@@ -688,8 +761,8 @@ mod tests {
             },
             resolution: reference_model.resolution.clone(),
             // Add noise to distortion parameters
-            xi: 0.0,
-            alpha: (reference_model.alpha * 0.85).max(0.1).min(0.99),
+            xi: -0.2,
+            alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
         };
 
         println!("Reference model parameters:");
@@ -733,19 +806,19 @@ mod tests {
 
         // Check that parameters have been optimized close to reference values
         assert!(
-            (noisy_model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 10.0,
+            (noisy_model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 3.0,
             "fx parameter didn't converge to expected value"
         );
         assert!(
-            (noisy_model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 10.0,
+            (noisy_model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 3.0,
             "fy parameter didn't converge to expected value"
         );
         assert!(
-            (noisy_model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 10.0,
+            (noisy_model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 3.0,
             "cx parameter didn't converge to expected value"
         );
         assert!(
-            (noisy_model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 10.0,
+            (noisy_model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 3.0,
             "cy parameter didn't converge to expected value"
         );
         assert!(
