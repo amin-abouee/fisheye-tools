@@ -805,14 +805,13 @@ mod tests {
             "cy parameter didn't converge to expected value"
         );
         assert!(
-            (noisy_model.xi - reference_model.xi).abs() < 0.05,
-            "xi parameter didn't converge to expected value"
-        );
-        assert!(
             (noisy_model.alpha - reference_model.alpha).abs() < 0.05,
             "alpha parameter didn't converge to expected value"
         );
-
+        assert!(
+            (noisy_model.xi - reference_model.xi).abs() < 0.05,
+            "xi parameter didn't converge to expected value"
+        );
         // Verify that alpha is within bounds (0, 1]
         assert!(
             noisy_model.alpha > 0.0 && noisy_model.alpha <= 1.0,
