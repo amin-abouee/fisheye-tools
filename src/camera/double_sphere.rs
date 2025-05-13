@@ -9,8 +9,7 @@ use argmin::{
 use argmin_observer_slog::SlogLogger;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io::Write;
+use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
 
 // Cost function for optimization
@@ -228,7 +227,7 @@ impl Hessian for DoubleSphereOptimizationCost {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DoubleSphereModel {
     pub intrinsics: Intrinsics,
     pub resolution: Resolution,
@@ -254,6 +253,21 @@ impl DoubleSphereModel {
             }
         }
         condition
+    }
+}
+
+impl fmt::Debug for DoubleSphereModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "DoubleSphere Model: fx:{} fy:{} cx:{} cy:{} xi:{} alpha:{}",
+            self.intrinsics.fx,
+            self.intrinsics.fy,
+            self.intrinsics.cx,
+            self.intrinsics.cy,
+            self.xi,
+            self.alpha
+        )
     }
 }
 
