@@ -50,8 +50,8 @@ impl Operator for DoubleSphereOptimizationCost {
         let model = DoubleSphereModel {
             intrinsics,
             resolution,
-            xi,
             alpha,
+            xi,
         };
 
         for i in 0..num_points {
@@ -90,8 +90,8 @@ impl Jacobian for DoubleSphereOptimizationCost {
         let model = DoubleSphereModel {
             intrinsics,
             resolution,
-            xi,
             alpha,
+            xi,
         };
 
         for i in 0..num_points {
@@ -130,8 +130,8 @@ impl CostFunction for DoubleSphereOptimizationCost {
         let model = DoubleSphereModel {
             intrinsics,
             resolution,
-            xi,
             alpha,
+            xi,
         };
 
         for i in 0..self.points3d.ncols() {
@@ -167,8 +167,8 @@ impl Gradient for DoubleSphereOptimizationCost {
         let model = DoubleSphereModel {
             intrinsics,
             resolution,
-            xi,
             alpha,
+            xi,
         };
 
         for i in 0..self.points3d.ncols() {
@@ -207,8 +207,8 @@ impl Hessian for DoubleSphereOptimizationCost {
         let model = DoubleSphereModel {
             intrinsics,
             resolution,
-            xi,
             alpha,
+            xi,
         };
 
         for i in 0..self.points3d.ncols() {
@@ -231,8 +231,8 @@ impl Hessian for DoubleSphereOptimizationCost {
 pub struct DoubleSphereModel {
     pub intrinsics: Intrinsics,
     pub resolution: Resolution,
-    pub xi: f64,
     pub alpha: f64,
+    pub xi: f64,
 }
 
 impl DoubleSphereModel {
@@ -260,13 +260,13 @@ impl fmt::Debug for DoubleSphereModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "DoubleSphere Model: fx:{} fy:{} cx:{} cy:{} xi:{} alpha:{}",
+            "DoubleSphere [fx: {} fy: {} cx: {} cy: {} alpha: {} xi: {}]",
             self.intrinsics.fx,
             self.intrinsics.fy,
             self.intrinsics.cx,
             self.intrinsics.cy,
-            self.xi,
-            self.alpha
+            self.alpha,
+            self.xi
         )
     }
 }
@@ -283,8 +283,8 @@ impl CameraModel for DoubleSphereModel {
             width: 0,
             height: 0,
         };
-        self.xi = parameters[4];
-        self.alpha = parameters[3];
+        self.alpha = parameters[4];
+        self.xi = parameters[5];
         Ok(())
     }
 
@@ -412,13 +412,13 @@ impl CameraModel for DoubleSphereModel {
             .as_vec()
             .ok_or_else(|| CameraModelError::InvalidParams("Invalid resolution".to_string()))?;
 
-        let xi = intrinsics[4]
-            .as_f64()
-            .ok_or_else(|| CameraModelError::InvalidParams("Invalid xi".to_string()))?;
-
-        let alpha = intrinsics[5]
+        let alpha = intrinsics[4]
             .as_f64()
             .ok_or_else(|| CameraModelError::InvalidParams("Invalid alpha".to_string()))?;
+
+        let xi = intrinsics[5]
+            .as_f64()
+            .ok_or_else(|| CameraModelError::InvalidParams("Invalid xi".to_string()))?;
 
         let intrinsics = Intrinsics {
             fx: intrinsics[0]
@@ -449,8 +449,8 @@ impl CameraModel for DoubleSphereModel {
         let model = DoubleSphereModel {
             intrinsics,
             resolution,
-            xi,
             alpha,
+            xi,
         };
 
         // Validate parameters
@@ -474,8 +474,8 @@ impl CameraModel for DoubleSphereModel {
                         self.intrinsics.fy,
                         self.intrinsics.cx,
                         self.intrinsics.cy,
-                        self.xi,
                         self.alpha,
+                        self.xi,
                     ])
                     .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
                 ),
@@ -510,15 +510,15 @@ impl CameraModel for DoubleSphereModel {
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
 
-        if !self.xi.is_finite() {
-            return Err(CameraModelError::InvalidParams(
-                "xi must be finite".to_string(),
-            ));
-        }
-
         if self.alpha <= 0.0 || self.alpha > 1.0 {
             return Err(CameraModelError::InvalidParams(
                 "alpha must be in (0, 1]".to_string(),
+            ));
+        }
+
+        if !self.xi.is_finite() {
+            return Err(CameraModelError::InvalidParams(
+                "xi must be finite".to_string(),
             ));
         }
 
@@ -591,8 +591,8 @@ impl CameraModel for DoubleSphereModel {
         let model = DoubleSphereModel {
             intrinsics: intrinsics.clone(),
             resolution: resolution.clone(),
-            xi,
             alpha,
+            xi,
         };
 
         // Validate parameters
@@ -685,8 +685,8 @@ mod tests {
         assert_eq!(model.intrinsics.fy, 347.1109973814674);
         assert_eq!(model.intrinsics.cx, 365.8121721753254);
         assert_eq!(model.intrinsics.cy, 249.3555778487899);
-        assert_eq!(model.xi, -0.24425190195168348);
         assert_eq!(model.alpha, 0.5657413673629862);
+        assert_eq!(model.xi, -0.24425190195168348);
         assert_eq!(model.resolution.width, 752);
         assert_eq!(model.resolution.height, 480);
     }
@@ -779,44 +779,13 @@ mod tests {
             alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
         };
 
-        println!("Reference model parameters:");
-        println!(
-            "fx: {}, fy: {}",
-            reference_model.intrinsics.fx, reference_model.intrinsics.fy
-        );
-        println!(
-            "cx: {}, cy: {}",
-            reference_model.intrinsics.cx, reference_model.intrinsics.cy
-        );
-        println!(
-            "xi: {}, alpha: {}",
-            reference_model.xi, reference_model.alpha
-        );
-
-        println!("\nNoisy model parameters (before optimization):");
-        println!(
-            "fx: {}, fy: {}",
-            noisy_model.intrinsics.fx, noisy_model.intrinsics.fy
-        );
-        println!(
-            "cx: {}, cy: {}",
-            noisy_model.intrinsics.cx, noisy_model.intrinsics.cy
-        );
-        println!("xi: {}, alpha: {}", noisy_model.xi, noisy_model.alpha);
+        println!("Reference model: {:?}", reference_model);
+        println!("Noisy model: {:?}", noisy_model);
 
         // Optimize the model with noise
-        noisy_model.optimize(&points_3d, &points_2d, true).unwrap();
+        noisy_model.optimize(&points_3d, &points_2d, false).unwrap();
 
-        println!("\nOptimized model parameters:");
-        println!(
-            "fx: {}, fy: {}",
-            noisy_model.intrinsics.fx, noisy_model.intrinsics.fy
-        );
-        println!(
-            "cx: {}, cy: {}",
-            noisy_model.intrinsics.cx, noisy_model.intrinsics.cy
-        );
-        println!("xi: {}, alpha: {}", noisy_model.xi, noisy_model.alpha);
+        println!("Optimized model: {:?}", noisy_model);
 
         // Check that parameters have been optimized close to reference values
         assert!(

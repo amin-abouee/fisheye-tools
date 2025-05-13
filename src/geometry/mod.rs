@@ -42,17 +42,12 @@ where
     let num_cells_x = (n as f64 * (width / height)).sqrt().round() as i32;
     let num_cells_y = (n as f64 * (height / width)).sqrt().round() as i32;
 
-    println!("num_cells_x: {:?}", num_cells_x);
-    println!("num_cells_y: {:?}", num_cells_y);
-
     // Calculate the dimensions of each cell
     let cell_width = width / num_cells_x as f64;
     let cell_height = height / num_cells_y as f64;
 
     // Calculate total number of points
     let total_points = (num_cells_x * num_cells_y) as usize;
-
-    println!("total_points: {:?}", total_points);
 
     // Create a matrix with the appropriate size
     let mut points_2d_matrix = Matrix2xX::zeros(total_points);
