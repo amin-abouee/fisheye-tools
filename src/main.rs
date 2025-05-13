@@ -55,7 +55,7 @@ fn create_output_model(
 ) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
     let output_model: Box<dyn CameraModel> = match output_model_type {
         "rad_tan" => {
-            println!("Successfully loaded input model: RadTan");
+            println!("Estimated init params: RadTan");
             Box::new(RadTanModel::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
@@ -64,7 +64,7 @@ fn create_output_model(
             )?)
         }
         "double_sphere" => {
-            println!("Successfully loaded input model: DoubleSphere");
+            println!("Estimated init params: DoubleSphere");
             Box::new(DoubleSphereModel::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Input Path: {:?}", cli.input_path);
 
     // Convert PathBuf to &str for loading functions
-    let n = 100 as usize;
+    let n = 500 as usize;
     let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
     let input_model_type = cli.input_model.as_str();
     let input_model = create_input_model(input_model_type, input_path_str)?;
@@ -108,13 +108,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("input_model_distortion: {:?}", input_model_distortion);
 
     let output_model_type = cli.output_model.as_str();
-    let output_model = create_output_model(
+    let mut output_model = create_output_model(
         output_model_type,
         &input_model_intrinsics,
         &input_model_resolution,
         &points_2d,
         &points_3d,
     )?;
+
+    output_model.optimize(&points_3d, &points_2d, true).unwrap();
 
     println!("Output Model Parameters:");
     println!("Intrinsics: {:?}", output_model.get_intrinsics());
