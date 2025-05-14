@@ -236,7 +236,7 @@ pub struct DoubleSphereModel {
 }
 
 impl DoubleSphereModel {
-    fn check_proj_condition(&self, z: f64, d1: f64) -> bool {
+    fn check_projection_condition(&self, z: f64, d1: f64) -> bool {
         let w1 = match self.alpha <= 0.5 {
             true => self.alpha / (1.0 - self.alpha),
             false => (1.0 - self.alpha) / self.alpha,
@@ -245,7 +245,7 @@ impl DoubleSphereModel {
         z > -w2 * d1
     }
 
-    fn check_unproj_condition(&self, r_squared: f64) -> bool {
+    fn check_unprojection_condition(&self, r_squared: f64) -> bool {
         let mut condition = true;
         if self.alpha > 0.5 {
             if r_squared > 1.0 / (2.0 * self.alpha - 1.0) {
@@ -307,7 +307,7 @@ impl CameraModel for DoubleSphereModel {
         let denom = self.alpha * d2 + (1.0 - self.alpha) * gamma;
 
         // Check if the projection is valid
-        if denom < PRECISION || !self.check_proj_condition(z, d1) {
+        if denom < PRECISION || !self.check_projection_condition(z, d1) {
             return Ok((Vector2::new(-1.0, -1.0), Some(DMatrix::<f64>::zeros(2, 6))));
         }
 
@@ -369,7 +369,7 @@ impl CameraModel for DoubleSphereModel {
         let r_squared = (mx * mx) + (my * my);
 
         // Check if we can unproject this point
-        if alpha != 0.0 && !self.check_unproj_condition(r_squared) {
+        if alpha != 0.0 && !self.check_unprojection_condition(r_squared) {
             return Err(CameraModelError::PointIsOutSideImage);
         }
 
