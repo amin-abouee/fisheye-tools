@@ -13,28 +13,34 @@ pub struct RadTanModel {
     pub distortion: [f64; 5], // k1, k2, p1, p2, k3
 }
 
-impl CameraModel for RadTanModel {
-    fn initialize(&mut self, parameters: &DVector<f64>) -> Result<(), CameraModelError> {
-        self.intrinsics = Intrinsics {
-            fx: parameters[0],
-            fy: parameters[1],
-            cx: parameters[2],
-            cy: parameters[3],
+impl RadTanModel {
+    pub fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
+        let model = RadTanModel {
+            intrinsics: Intrinsics {
+                fx: parameters[0],
+                fy: parameters[1],
+                cx: parameters[2],
+                cy: parameters[3],
+            },
+            resolution: Resolution {
+                width: 0,
+                height: 0,
+            },
+            distortion: [
+                parameters[4],
+                parameters[5],
+                parameters[6],
+                parameters[7],
+                parameters[8],
+            ],
         };
-        self.resolution = Resolution {
-            width: 0,
-            height: 0,
-        };
-        self.distortion = [
-            parameters[4],
-            parameters[5],
-            parameters[6],
-            parameters[7],
-            parameters[8],
-        ];
-        Ok(())
-    }
 
+        model.validate_params()?;
+        Ok(model)
+    }
+}
+
+impl CameraModel for RadTanModel {
     fn project(
         &self,
         point_3d: &Vector3<f64>,

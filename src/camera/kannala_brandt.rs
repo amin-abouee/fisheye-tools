@@ -12,21 +12,29 @@ pub struct KannalaBrandtModel {
     pub coefficients: [f64; 4], // k1, k2, k3, k4
 }
 
-impl CameraModel for KannalaBrandtModel {
-    fn initialize(&mut self, parameters: &DVector<f64>) -> Result<(), CameraModelError> {
-        self.intrinsics = Intrinsics {
-            fx: parameters[0],
-            fy: parameters[1],
-            cx: parameters[2],
-            cy: parameters[3],
+impl KannalaBrandtModel {
+    #[allow(dead_code)]
+    fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
+        let model = KannalaBrandtModel {
+            intrinsics: Intrinsics {
+                fx: parameters[0],
+                fy: parameters[1],
+                cx: parameters[2],
+                cy: parameters[3],
+            },
+            resolution: Resolution {
+                width: 0,
+                height: 0,
+            },
+            coefficients: [parameters[4], parameters[5], parameters[6], parameters[7]],
         };
-        self.resolution = Resolution {
-            width: 0,
-            height: 0,
-        };
-        Ok(())
-    }
 
+        model.validate_params()?;
+        Ok(model)
+    }
+}
+
+impl CameraModel for KannalaBrandtModel {
     fn project(
         &self,
         point_3d: &Vector3<f64>,

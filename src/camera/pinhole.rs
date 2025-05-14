@@ -12,20 +12,41 @@ pub struct PinholeModel {
     pub resolution: Resolution,
 }
 
-impl CameraModel for PinholeModel {
-    fn initialize(&mut self, parameters: &DVector<f64>) -> Result<(), CameraModelError> {
-        self.intrinsics = Intrinsics {
-            fx: parameters[0],
-            fy: parameters[1],
-            cx: parameters[2],
-            cy: parameters[3],
+impl PinholeModel {
+    pub fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
+        let model = PinholeModel {
+            intrinsics: Intrinsics {
+                fx: parameters[0],
+                fy: parameters[1],
+                cx: parameters[2],
+                cy: parameters[3],
+            },
+            resolution: Resolution {
+                width: 0,
+                height: 0,
+            },
         };
-        self.resolution = Resolution {
-            width: 0,
-            height: 0,
-        };
-        Ok(())
+
+        model.validate_params()?;
+
+        Ok(model)
     }
+}
+
+impl CameraModel for PinholeModel {
+    // fn initialize(&mut self, parameters: &DVector<f64>) -> Result<(), CameraModelError> {
+    //     self.intrinsics = Intrinsics {
+    //         fx: parameters[0],
+    //         fy: parameters[1],
+    //         cx: parameters[2],
+    //         cy: parameters[3],
+    //     };
+    //     self.resolution = Resolution {
+    //         width: 0,
+    //         height: 0,
+    //     };
+    //     Ok(())
+    // }
 
     fn project(
         &self,

@@ -26,9 +26,9 @@ impl DoubleSphereOptimizationCost {
     }
 
     // Helper to unpack parameters
-    fn unpack_params(p: &DVector<f64>) -> (f64, f64, f64, f64, f64, f64) {
-        (p[0], p[1], p[2], p[3], p[4], p[5])
-    }
+    // fn unpack_params(p: &DVector<f64>) -> (f64, f64, f64, f64, f64, f64) {
+    //     (p[0], p[1], p[2], p[3], p[4], p[5])
+    // }
 }
 
 // Implement Operator trait for Gauss-Newton
@@ -37,22 +37,9 @@ impl Operator for DoubleSphereOptimizationCost {
     type Output = DVector<f64>; // Residuals vector
 
     fn apply(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
         let num_points = self.points3d.ncols();
         let mut residuals = DVector::zeros(num_points * 2);
-
-        let intrinsics = Intrinsics { fx, fy, cx, cy };
-        let resolution = Resolution {
-            width: 0,  // Not used in projection
-            height: 0, // Not used in projection
-        };
-
-        let model = DoubleSphereModel {
-            intrinsics,
-            resolution,
-            alpha,
-            xi,
-        };
+        let model = DoubleSphereModel::new(&p)?;
 
         for i in 0..num_points {
             let p3d = &self.points3d.column(i).into_owned();
@@ -77,22 +64,9 @@ impl Jacobian for DoubleSphereOptimizationCost {
     type Jacobian = DMatrix<f64>;
 
     fn jacobian(&self, p: &Self::Param) -> Result<Self::Jacobian, Error> {
-        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
         let num_points = self.points3d.ncols();
         let mut jacobian = DMatrix::zeros(num_points * 2, 6); // 2 residuals per point, 6 parameters
-
-        let intrinsics = Intrinsics { fx, fy, cx, cy };
-        let resolution = Resolution {
-            width: 0,  // Not used in projection
-            height: 0, // Not used in projection
-        };
-
-        let model = DoubleSphereModel {
-            intrinsics,
-            resolution,
-            alpha,
-            xi,
-        };
+        let model = DoubleSphereModel::new(&p)?;
 
         for i in 0..num_points {
             let p3d = &self.points3d.column(i).into_owned();
@@ -118,21 +92,8 @@ impl CostFunction for DoubleSphereOptimizationCost {
     type Output = f64; // Sum of squared errors
 
     fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
         let mut total_error_sq = 0.0;
-
-        let intrinsics = Intrinsics { fx, fy, cx, cy };
-        let resolution = Resolution {
-            width: 0,  // Not used in projection
-            height: 0, // Not used in projection
-        };
-
-        let model = DoubleSphereModel {
-            intrinsics,
-            resolution,
-            alpha,
-            xi,
-        };
+        let model = DoubleSphereModel::new(&p)?;
 
         for i in 0..self.points3d.ncols() {
             let p3d = &self.points3d.column(i).into_owned();
@@ -155,21 +116,8 @@ impl Gradient for DoubleSphereOptimizationCost {
     type Gradient = DVector<f64>; // Gradient of the cost function (J^T * r)
 
     fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
-        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
         let mut grad = DVector::zeros(6);
-
-        let intrinsics = Intrinsics { fx, fy, cx, cy };
-        let resolution = Resolution {
-            width: 0,  // Not used in projection
-            height: 0, // Not used in projection
-        };
-
-        let model = DoubleSphereModel {
-            intrinsics,
-            resolution,
-            alpha,
-            xi,
-        };
+        let model = DoubleSphereModel::new(&p)?;
 
         for i in 0..self.points3d.ncols() {
             let p3d = &self.points3d.column(i).into_owned();
@@ -195,21 +143,8 @@ impl Hessian for DoubleSphereOptimizationCost {
     type Hessian = DMatrix<f64>; // J^T * J
 
     fn hessian(&self, p: &Self::Param) -> Result<Self::Hessian, Error> {
-        let (fx, fy, cx, cy, alpha, xi) = Self::unpack_params(p);
         let mut jtj = DMatrix::zeros(6, 6);
-
-        let intrinsics = Intrinsics { fx, fy, cx, cy };
-        let resolution = Resolution {
-            width: 0,  // Not used in projection
-            height: 0, // Not used in projection
-        };
-
-        let model = DoubleSphereModel {
-            intrinsics,
-            resolution,
-            alpha,
-            xi,
-        };
+        let model = DoubleSphereModel::new(&p)?;
 
         for i in 0..self.points3d.ncols() {
             let p3d = &self.points3d.column(i).into_owned();
@@ -236,6 +171,26 @@ pub struct DoubleSphereModel {
 }
 
 impl DoubleSphereModel {
+    fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
+        let model = DoubleSphereModel {
+            intrinsics: Intrinsics {
+                fx: parameters[0],
+                fy: parameters[1],
+                cx: parameters[2],
+                cy: parameters[3],
+            },
+            resolution: Resolution {
+                width: 0,
+                height: 0,
+            },
+            alpha: parameters[4],
+            xi: parameters[5],
+        };
+
+        model.validate_params()?;
+        Ok(model)
+    }
+
     fn check_projection_condition(&self, z: f64, d1: f64) -> bool {
         let w1 = match self.alpha <= 0.5 {
             true => self.alpha / (1.0 - self.alpha),
@@ -272,22 +227,6 @@ impl fmt::Debug for DoubleSphereModel {
 }
 
 impl CameraModel for DoubleSphereModel {
-    fn initialize(&mut self, parameters: &DVector<f64>) -> Result<(), CameraModelError> {
-        self.intrinsics = Intrinsics {
-            fx: parameters[0],
-            fy: parameters[1],
-            cx: parameters[2],
-            cy: parameters[3],
-        };
-        self.resolution = Resolution {
-            width: 0,
-            height: 0,
-        };
-        self.alpha = parameters[4];
-        self.xi = parameters[5];
-        Ok(())
-    }
-
     fn project(
         &self,
         point_3d: &Vector3<f64>,
