@@ -24,11 +24,6 @@ impl DoubleSphereOptimizationCost {
         assert_eq!(points3d.ncols(), points2d.ncols());
         DoubleSphereOptimizationCost { points3d, points2d }
     }
-
-    // Helper to unpack parameters
-    // fn unpack_params(p: &DVector<f64>) -> (f64, f64, f64, f64, f64, f64) {
-    //     (p[0], p[1], p[2], p[3], p[4], p[5])
-    // }
 }
 
 // Implement Operator trait for Gauss-Newton
@@ -707,14 +702,14 @@ mod tests {
         let mut noisy_model = DoubleSphereModel {
             intrinsics: Intrinsics {
                 // Add some noise to the intrinsic parameters (±5-10%)
-                fx: reference_model.intrinsics.fx + 0.05,
+                fx: reference_model.intrinsics.fx * 0.95,
                 fy: reference_model.intrinsics.fy * 1.02,
-                cx: reference_model.intrinsics.cx + 0.2,
-                cy: reference_model.intrinsics.cy - 0.1,
+                cx: reference_model.intrinsics.cx + 0.5,
+                cy: reference_model.intrinsics.cy - 0.8,
             },
             resolution: reference_model.resolution.clone(),
             // Add noise to distortion parameters
-            xi: -0.2,
+            xi: -0.1,
             alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
         };
 
@@ -728,19 +723,19 @@ mod tests {
 
         // Check that parameters have been optimized close to reference values
         assert!(
-            (noisy_model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 3.0,
+            (noisy_model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
             "fx parameter didn't converge to expected value"
         );
         assert!(
-            (noisy_model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 3.0,
+            (noisy_model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
             "fy parameter didn't converge to expected value"
         );
         assert!(
-            (noisy_model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 3.0,
+            (noisy_model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 1.0,
             "cx parameter didn't converge to expected value"
         );
         assert!(
-            (noisy_model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 3.0,
+            (noisy_model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 1.0,
             "cy parameter didn't converge to expected value"
         );
         assert!(
@@ -760,5 +755,77 @@ mod tests {
         // Verify that focal lengths are positive
         assert!(noisy_model.intrinsics.fx > 0.0, "fx must be positive");
         assert!(noisy_model.intrinsics.fy > 0.0, "fy must be positive");
+    }
+
+    #[test]
+    fn test_double_sphere_optimization_cost_basic() {
+        // Load camera model from YAML
+        let model = DoubleSphereModel::load_from_yaml("samples/double_sphere.yaml").unwrap();
+
+        // 5 sample 2D points as a flat vector
+        let points_2d_vec = vec![0.0, 0.0, 2.0, 2.0, -2.0, 2.0, 2.0, -2.0, -2.0, -2.0];
+        let mat_2d = Matrix2xX::from_vec(points_2d_vec);
+        let num_points = mat_2d.ncols();
+        println!("Size 2d points: {}", num_points);
+
+        // Create a Matrix3xX for 3D points, fill with zeros
+        let mut mat_3d = Matrix3xX::zeros(num_points);
+
+        // Fill the unprojected 3D points into mat_3d, only if unprojection succeeds
+        let mut valid_count = 0;
+        for i in 0..num_points {
+            let p2d = mat_2d.column(i).into_owned();
+            if let Ok(p3d) = model.unproject(&p2d) {
+                mat_3d.set_column(valid_count, &p3d);
+                // Overwrite the corresponding 2D point in mat_2d if needed (optional, but keeps correspondence)
+                // mat_2d.set_column(valid_count, &p2d);
+                valid_count += 1;
+            }
+        }
+
+        assert!(
+            valid_count > 0,
+            "At least one 2D point should be unprojectable"
+        );
+
+        // Construct cost struct
+        let cost = DoubleSphereOptimizationCost::new(mat_3d.clone(), mat_2d.clone());
+
+        // Prepare parameter vector from model
+        let p = nalgebra::DVector::from_vec(vec![
+            model.intrinsics.fx,
+            model.intrinsics.fy,
+            model.intrinsics.cx,
+            model.intrinsics.cy,
+            model.alpha,
+            model.xi,
+        ]);
+
+        // Test operator (apply)
+        let residuals = cost.apply(&p).unwrap();
+        assert_eq!(residuals.len(), 2 * mat_3d.ncols());
+        assert!(
+            residuals.iter().all(|v| v.abs() < 1e-6),
+            "Residuals should be near zero for perfect model"
+        );
+
+        // Test cost
+        let c = cost.cost(&p).unwrap();
+        assert!(c >= 0.0, "Cost should be non-negative");
+        assert!(c < 1e-5, "Cost should be near zero for perfect model");
+
+        // Test jacobian
+        let jac = cost.jacobian(&p).unwrap();
+        assert_eq!(jac.nrows(), 2 * mat_3d.ncols());
+        assert_eq!(jac.ncols(), 6);
+
+        // Test gradient
+        let grad = cost.gradient(&p).unwrap();
+        assert_eq!(grad.len(), 6);
+
+        // Test hessian
+        let hess = cost.hessian(&p).unwrap();
+        assert_eq!(hess.nrows(), 6);
+        assert_eq!(hess.ncols(), 6);
     }
 }
