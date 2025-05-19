@@ -35,20 +35,23 @@ impl Operator for DoubleSphereOptimizationCost {
         let num_points = self.points3d.ncols();
         let mut residuals = DVector::zeros(num_points * 2);
         let model = DoubleSphereModel::new(&p)?;
+        let mut counter = 0;
 
         for i in 0..num_points {
             let p3d = &self.points3d.column(i).into_owned();
             let p2d_gt = &self.points2d.column(i).into_owned();
+            let project_result = model.project(p3d, false);
 
-            let (p2d_projected, _) = model.project(p3d, false).unwrap();
-
-            // Each point contributes 2 residuals (x and y dimensions)
-            residuals[i * 2] = p2d_projected.x - p2d_gt.x;
-            residuals[i * 2 + 1] = p2d_projected.y - p2d_gt.y;
+            if let Ok((p2d_projected, _)) = project_result {
+                // Each point contributes 2 residuals (x and y dimensions)
+                residuals[counter * 2] = p2d_projected.x - p2d_gt.x;
+                residuals[counter * 2 + 1] = p2d_projected.y - p2d_gt.y;
+                counter += 1;
+            }
         }
-
-        // println!("residuals: {residuals}");
-
+        // Only return the rows with actual residuals
+        residuals = residuals.rows(0, counter * 2).into_owned();
+        println!("Size residuals: {}", residuals.len());
         Ok(residuals)
     }
 }
@@ -62,6 +65,7 @@ impl Jacobian for DoubleSphereOptimizationCost {
         let num_points = self.points3d.ncols();
         let mut jacobian = DMatrix::zeros(num_points * 2, 6); // 2 residuals per point, 6 parameters
         let model = DoubleSphereModel::new(&p)?;
+        let mut counter = 0;
 
         for i in 0..num_points {
             let p3d = &self.points3d.column(i).into_owned();
@@ -71,12 +75,12 @@ impl Jacobian for DoubleSphereOptimizationCost {
 
             if let Some(jac) = jacobian_point_2x6 {
                 // Copy the 2x6 Jacobian for this point into the overall Jacobian matrix
-                jacobian.view_mut((i * 2, 0), (2, 6)).copy_from(&jac);
+                jacobian.view_mut((counter * 2, 0), (2, 6)).copy_from(&jac);
+                counter += 1;
             }
         }
-
-        // println!("jacobian matrix: {jacobian}");
-
+        jacobian = jacobian.rows(0, counter * 2).into_owned();
+        println!("Size residuals: {}", jacobian.nrows());
         Ok(jacobian)
     }
 }
@@ -182,7 +186,8 @@ impl DoubleSphereModel {
             xi: parameters[5],
         };
 
-        model.validate_params()?;
+        // model.validate_params()?;
+        println!("new model is: {:?}", model);
         Ok(model)
     }
 
@@ -242,7 +247,7 @@ impl CameraModel for DoubleSphereModel {
 
         // Check if the projection is valid
         if denom < PRECISION || !self.check_projection_condition(z, d1) {
-            return Ok((Vector2::new(-1.0, -1.0), Some(DMatrix::<f64>::zeros(2, 6))));
+            return Err(CameraModelError::PointIsOutSideImage);
         }
 
         let mx = x / denom;
@@ -574,7 +579,7 @@ impl CameraModel for DoubleSphereModel {
         // Setup executor with the solver and cost function
         let executor_builder = Executor::new(cost_function, solver)
             .configure(|state| state.param(init_param).max_iters(100))
-            .add_observer(SlogLogger::term(), ObserverMode::Always);
+            .add_observer(SlogLogger::term(), ObserverMode::NewBest);
 
         if verbose {
             println!("Starting optimization with Gauss-Newton...");

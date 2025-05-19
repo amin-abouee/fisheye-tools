@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Input Path: {:?}", cli.input_path);
 
     // Convert PathBuf to &str for loading functions
-    let n = 500 as usize;
+    let n = 100 as usize;
     let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
     let input_model_type = cli.input_model.as_str();
     let input_model = create_input_model(input_model_type, input_path_str)?;
