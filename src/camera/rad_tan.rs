@@ -1,10 +1,9 @@
+use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use nalgebra::{DMatrix, DVector, Matrix2, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use yaml_rust::YamlLoader;
-
-use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RadTanModel {
@@ -499,7 +498,7 @@ mod tests {
 
         // Create output directory if it doesn't exist
         fs::create_dir_all("output").unwrap_or_else(|_| {
-            println!("Output directory already exists or couldn't be created");
+            println!("Output directory already exists or couldnot be created");
         });
 
         // Define input and output paths

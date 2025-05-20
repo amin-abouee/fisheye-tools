@@ -7,6 +7,7 @@ use argmin::{
     solver::gaussnewton::GaussNewton,
 };
 use argmin_observer_slog::SlogLogger;
+use log::info;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
@@ -51,7 +52,7 @@ impl Operator for DoubleSphereOptimizationCost {
         }
         // Only return the rows with actual residuals
         residuals = residuals.rows(0, counter * 2).into_owned();
-        println!("Size residuals: {}", residuals.len());
+        info!("Size residuals: {}", residuals.len());
         Ok(residuals)
     }
 }
@@ -80,7 +81,7 @@ impl Jacobian for DoubleSphereOptimizationCost {
             }
         }
         jacobian = jacobian.rows(0, counter * 2).into_owned();
-        println!("Size residuals: {}", jacobian.nrows());
+        info!("Size residuals: {}", jacobian.nrows());
         Ok(jacobian)
     }
 }
@@ -104,7 +105,7 @@ impl CostFunction for DoubleSphereOptimizationCost {
             total_error_sq += (p2d_projected - p2d_gt).norm();
         }
 
-        println!("total_error_sq: {total_error_sq}");
+        info!("total_error_sq: {total_error_sq}");
         Ok(total_error_sq)
     }
 }
@@ -131,7 +132,7 @@ impl Gradient for DoubleSphereOptimizationCost {
                 grad += jacobian.transpose() * residual_2x1;
             }
         }
-        println!("Gradient: {}", grad);
+        info!("Gradient: {}", grad);
         Ok(grad)
     }
 }
@@ -156,7 +157,7 @@ impl Hessian for DoubleSphereOptimizationCost {
             }
         }
 
-        println!("Hessian: {}", jtj);
+        info!("Hessian: {}", jtj);
         Ok(jtj)
     }
 }
@@ -187,7 +188,7 @@ impl DoubleSphereModel {
         };
 
         // model.validate_params()?;
-        println!("new model is: {:?}", model);
+        info!("new model is: {:?}", model);
         Ok(model)
     }
 
@@ -582,7 +583,7 @@ impl CameraModel for DoubleSphereModel {
             .add_observer(SlogLogger::term(), ObserverMode::NewBest);
 
         if verbose {
-            println!("Starting optimization with Gauss-Newton...");
+            info!("Starting optimization with Gauss-Newton...");
         }
 
         let res = executor_builder
@@ -590,8 +591,8 @@ impl CameraModel for DoubleSphereModel {
             .map_err(|e| CameraModelError::NumericalError(e.to_string()))?;
 
         if verbose {
-            println!("Optimization finished: \n{}", res);
-            println!("Termination status: {:?}", res.state().termination_status);
+            info!("Optimization finished: \n{}", res);
+            info!("Termination status: {:?}", res.state().termination_status);
         }
 
         let best_params_dvec = res.state().get_best_param().unwrap().clone();
@@ -636,7 +637,7 @@ mod tests {
 
         // Create output directory if it doesn't exist
         fs::create_dir_all("output").unwrap_or_else(|_| {
-            println!("Output directory already exists or couldn't be created");
+            info!("Output directory already exists or couldn't be created");
         });
 
         // Define input and output paths
@@ -718,13 +719,13 @@ mod tests {
             alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
         };
 
-        println!("Reference model: {:?}", reference_model);
-        println!("Noisy model: {:?}", noisy_model);
+        info!("Reference model: {:?}", reference_model);
+        info!("Noisy model: {:?}", noisy_model);
 
         // Optimize the model with noise
         noisy_model.optimize(&points_3d, &points_2d, false).unwrap();
 
-        println!("Optimized model: {:?}", noisy_model);
+        info!("Optimized model: {:?}", noisy_model);
 
         // Check that parameters have been optimized close to reference values
         assert!(
@@ -771,7 +772,7 @@ mod tests {
         let points_2d_vec = vec![0.0, 0.0, 2.0, 2.0, -2.0, 2.0, 2.0, -2.0, -2.0, -2.0];
         let mat_2d = Matrix2xX::from_vec(points_2d_vec);
         let num_points = mat_2d.ncols();
-        println!("Size 2d points: {}", num_points);
+        info!("Size 2d points: {}", num_points);
 
         // Create a Matrix3xX for 3D points, fill with zeros
         let mut mat_3d = Matrix3xX::zeros(num_points);

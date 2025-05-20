@@ -3,6 +3,8 @@ pub mod geometry;
 
 use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
 use clap::Parser;
+use flexi_logger::{colored_with_thread, FileSpec, Logger};
+use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
 use std::path::PathBuf; // Use PathBuf for paths
 
@@ -31,15 +33,15 @@ fn create_input_model(
 ) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
     let input_model: Box<dyn CameraModel> = match input_model_type {
         "rad_tan" => {
-            println!("Successfully loaded input model: RadTan");
+            info!("Successfully loaded input model: RadTan");
             Box::new(RadTanModel::load_from_yaml(input_path)?)
         }
         "double_sphere" => {
-            println!("Successfully loaded input model: DoubleSphere");
+            info!("Successfully loaded input model: DoubleSphere");
             Box::new(DoubleSphereModel::load_from_yaml(input_path)?)
         }
         _ => {
-            eprintln!("Unsupported input model type: {}", input_model_type);
+            error!("Unsupported input model type: {}", input_model_type);
             return Err("Unsupported input model type".into());
         }
     };
@@ -55,7 +57,7 @@ fn create_output_model(
 ) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
     let output_model: Box<dyn CameraModel> = match output_model_type {
         "rad_tan" => {
-            println!("Estimated init params: RadTan");
+            info!("Estimated init params: RadTan");
             Box::new(RadTanModel::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
@@ -64,7 +66,7 @@ fn create_output_model(
             )?)
         }
         "double_sphere" => {
-            println!("Estimated init params: DoubleSphere");
+            info!("Estimated init params: DoubleSphere");
             Box::new(DoubleSphereModel::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
@@ -73,7 +75,7 @@ fn create_output_model(
             )?)
         }
         _ => {
-            eprintln!("Unsupported input model type: {}", output_model_type);
+            error!("Unsupported input model type: {}", output_model_type);
             return Err("Unsupported input model type".into());
         }
     };
@@ -82,14 +84,18 @@ fn create_output_model(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Logger::try_with_str("info")? // Log level filter
+        .log_to_file(FileSpec::default().directory("logs")) // Log to files in the "logs" directory
+        .format(colored_with_thread) // Use the custom format including file and line number
+        .start()?;
     // Parse the command line arguments into the Cli struct
     // clap automatically handles errors (e.g., missing args) and --help / --version
     let cli = Cli::parse();
 
     // Access the parsed arguments
-    println!("Input Model Type: {}", cli.input_model);
-    println!("Output Model Type: {}", cli.output_model);
-    println!("Input Path: {:?}", cli.input_path);
+    info!("Input Model Type: {}", cli.input_model);
+    info!("Output Model Type: {}", cli.output_model);
+    info!("Input Path: {:?}", cli.input_path);
 
     // Convert PathBuf to &str for loading functions
     let n = 100 as usize;
@@ -97,15 +103,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_model_type = cli.input_model.as_str();
     let input_model = create_input_model(input_model_type, input_path_str)?;
     let (points_2d, points_3d) = geometry::sample_points(Some(&*input_model), n).unwrap();
-    println!("points_2d: {:?}", points_2d.ncols());
-    println!("points_3d: {:?}", points_3d.ncols());
+    info!("points_2d: {:?}", points_2d.ncols());
+    info!("points_3d: {:?}", points_3d.ncols());
 
     let input_model_intrinsics = input_model.get_intrinsics();
-    println!("input_model_intrinsics: {:?}", input_model_intrinsics);
+    info!("input_model_intrinsics: {:?}", input_model_intrinsics);
     let input_model_resolution = input_model.get_resolution();
-    println!("input_model_resolution: {:?}", input_model_resolution);
+    info!("input_model_resolution: {:?}", input_model_resolution);
     let input_model_distortion = input_model.get_distortion();
-    println!("input_model_distortion: {:?}", input_model_distortion);
+    info!("input_model_distortion: {:?}", input_model_distortion);
 
     let output_model_type = cli.output_model.as_str();
     let mut output_model = create_output_model(
@@ -118,10 +124,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     output_model.optimize(&points_3d, &points_2d, true).unwrap();
 
-    println!("Output Model Parameters:");
-    println!("Intrinsics: {:?}", output_model.get_intrinsics());
-    println!("Resolution: {:?}", output_model.get_resolution());
-    println!("Resolution: {:?}", output_model.get_distortion());
+    info!("Output Model Parameters:");
+    info!("Intrinsics: {:?}", output_model.get_intrinsics());
+    info!("Resolution: {:?}", output_model.get_resolution());
+    info!("Resolution: {:?}", output_model.get_distortion());
 
     Ok(())
 }
