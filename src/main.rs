@@ -3,7 +3,7 @@ pub mod geometry;
 
 use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
 use clap::Parser;
-use flexi_logger::{colored_with_thread, FileSpec, Logger};
+use flexi_logger::{detailed_format, colored_detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
 use std::path::PathBuf; // Use PathBuf for paths
@@ -84,9 +84,26 @@ fn create_output_model(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Logger::try_with_str("info")? // Log level filter
-        .log_to_file(FileSpec::default().directory("logs")) // Log to files in the "logs" directory
-        .format(colored_with_thread) // Use the custom format including file and line number
+    // Initialize logger with info level filter
+    Logger::try_with_str("info")?
+        // Configure file logging with detailed format
+        .log_to_file(
+            FileSpec::default()
+                .directory("logs") // Store logs in the "logs" directory
+                .suppress_timestamp() // Avoid timestamp in filename
+                .suffix("log"), // Use .log extension
+        )
+        // Ensure all log messages are duplicated to stdout
+        .duplicate_to_stdout(Duplicate::All)
+        // Use detailed format for log files
+        .format_for_files(detailed_format)
+        // Use colored format for terminal output
+        .format_for_stdout(colored_detailed_format)
+        // Set custom color palette for different log levels
+        // Format: "error;warn;info;debug;trace"
+        // Using ANSI color codes: 
+        // 196=bright red, 208=orange, 76=green, 39=cyan, 178=gold
+        .set_palette("196;208;76;39;178".to_string())
         .start()?;
     // Parse the command line arguments into the Cli struct
     // clap automatically handles errors (e.g., missing args) and --help / --version
