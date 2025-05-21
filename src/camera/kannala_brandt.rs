@@ -32,22 +32,116 @@ impl KannalaBrandtModel {
         model.validate_params()?;
         Ok(model)
     }
+
+    fn check_projection_condition(&self, z: f64) -> bool {
+        z > 0.0
+    }
 }
 
 impl CameraModel for KannalaBrandtModel {
     fn project(
         &self,
         point_3d: &Vector3<f64>,
-        _compute_jacobian: bool,
+        compute_jacobian: bool,
     ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError> {
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
         }
 
-        // To be implemented
-        Err(CameraModelError::InvalidParams(
-            "Not implemented yet".to_string(),
-        ))
+        let x = point_3d.x;
+        let y = point_3d.y;
+        let z = point_3d.z;
+
+        if !self.check_projection_condition(z) {
+            return Err(CameraModelError::PointIsOutSideImage);
+        }
+
+        let k1 = self.coefficients[0];
+        let k2 = self.coefficients[1];
+        let k3 = self.coefficients[2];
+        let k4 = self.coefficients[3];
+
+        let fx = self.intrinsics.fx;
+        let fy = self.intrinsics.fy;
+        let cx = self.intrinsics.cx;
+        let cy = self.intrinsics.cy;
+
+        let r = (x * x + y * y).sqrt();
+        let theta = r.atan2(z);
+
+        let theta2 = theta * theta;
+        let theta3 = theta2 * theta;
+        let theta5 = theta3 * theta2;
+        let theta7 = theta5 * theta2;
+        let theta9 = theta7 * theta2;
+
+        let theta_d = theta + k1 * theta3 + k2 * theta5 + k3 * theta7 + k4 * theta9;
+
+        let epsilon = 1e-6; // Epsilon for r in projection
+        let (x_r, y_r) = if r < epsilon {
+            (0.0, 0.0)
+        } else {
+            (x / r, y / r)
+        };
+
+        let proj_x = fx * theta_d * x_r + cx;
+        let proj_y = fy * theta_d * y_r + cy;
+        let point_2d = Vector2::new(proj_x, proj_y);
+
+        let mut jacobian_option: Option<DMatrix<f64>> = None;
+
+        if compute_jacobian {
+            let mut jacobian = DMatrix::zeros(2, 8);
+
+            let jac_epsilon = 1e-9; // Epsilon for r in Jacobian x_r, y_r calculation
+            let (jac_x_r, jac_y_r) = if r < jac_epsilon {
+                (0.0, 0.0)
+            } else {
+                (x / r, y / r)
+            };
+
+            // Column 0: dfx
+            jacobian[(0, 0)] = theta_d * jac_x_r;
+            jacobian[(1, 0)] = 0.0;
+
+            // Column 1: dfy
+            jacobian[(0, 1)] = 0.0;
+            jacobian[(1, 1)] = theta_d * jac_y_r;
+
+            // Column 2: dcx
+            jacobian[(0, 2)] = 1.0;
+            jacobian[(1, 2)] = 0.0;
+
+            // Column 3: dcy
+            jacobian[(0, 3)] = 0.0;
+            jacobian[(1, 3)] = 1.0;
+
+            // Columns 4-7: dk1, dk2, dk3, dk4
+            // de_dp * dp_dd_theta = [fx * jac_x_r, fy * jac_y_r] (2x1 vector)
+            // dd_theta_dks = [theta3, theta5, theta7, theta9] (1x4 row vector)
+            // Resulting 2x4 matrix:
+            // [fx * jac_x_r * theta3, fx * jac_x_r * theta5, fx * jac_x_r * theta7, fx * jac_x_r * theta9]
+            // [fy * jac_y_r * theta3, fy * jac_y_r * theta5, fy * jac_y_r * theta7, fy * jac_y_r * theta9]
+
+            let fx_x_r = fx * jac_x_r;
+            let fy_y_r = fy * jac_y_r;
+
+            jacobian[(0, 4)] = fx_x_r * theta3;
+            jacobian[(1, 4)] = fy_y_r * theta3;
+
+            jacobian[(0, 5)] = fx_x_r * theta5;
+            jacobian[(1, 5)] = fy_y_r * theta5;
+
+            jacobian[(0, 6)] = fx_x_r * theta7;
+            jacobian[(1, 6)] = fy_y_r * theta7;
+
+            jacobian[(0, 7)] = fx_x_r * theta9;
+            jacobian[(1, 7)] = fy_y_r * theta9;
+
+            jacobian_option = Some(jacobian);
+        }
+
+        Ok((point_2d, jacobian_option))
     }
 
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
