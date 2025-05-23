@@ -275,14 +275,23 @@ impl Hessian for DoubleSphereOptimizationCost {
 ///
 /// The Double Sphere model is designed for wide-angle and fisheye cameras.
 /// It uses two sphere projections to model the distortion characteristics
-/// of such cameras more accurately than traditional models.
+/// of such cameras more accurately than traditional models like polynomial distortion.
+/// The model is defined by intrinsic parameters (fx, fy, cx, cy) and two
+/// distortion parameters: `alpha` and `xi`.
 ///
 /// # Parameters
 ///
-/// * `intrinsics` - Camera intrinsic parameters (fx, fy, cx, cy)
-/// * `resolution` - Image resolution (width, height)
-/// * `alpha` - First distortion parameter, must be in (0, 1]
-/// * `xi` - Second distortion parameter, must be finite
+/// * `intrinsics`: [`Intrinsics`] - Camera intrinsic parameters (fx, fy, cx, cy).
+/// * `resolution`: [`Resolution`] - Image resolution (width, height).
+/// * `alpha`: `f64` - The first distortion parameter, controlling the transition between
+///   the two spheres. It must be in the range (0, 1].
+/// * `xi`: `f64` - The second distortion parameter, representing the displacement
+///   between the centers of the two spheres. It must be a finite number.
+///
+/// # References
+///
+/// * Usenko, V., Demmel, N., & Cremers, D. (2018). The Double Sphere Camera Model.
+///   In 2018 International Conference on 3D Vision (3DV).
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DoubleSphereModel {
     /// Camera intrinsic parameters
@@ -873,6 +882,22 @@ impl CameraModel for DoubleSphereModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq; // For floating point comparisons
+
+    // Helper to get a default model, similar to the one in samples/double_sphere.yaml
+    fn get_sample_model() -> DoubleSphereModel {
+        DoubleSphereModel {
+            intrinsics: Intrinsics {
+                fx: 348.112754378549,
+                fy: 347.1109973814674,
+                cx: 365.8121721753254,
+                cy: 249.3555778487899,
+            },
+            resolution: Resolution { width: 752, height: 480 },
+            alpha: 0.5657413673629862,
+            xi: -0.24425190195168348,
+        }
+    }
 
     #[test]
     fn test_double_sphere_load_from_yaml() {
@@ -949,6 +974,89 @@ mod tests {
         assert!((norm_3d.x - point_3d_unprojected.x).abs() < 1e-6);
         assert!((norm_3d.y - point_3d_unprojected.y).abs() < 1e-6);
         assert!((norm_3d.z - point_3d_unprojected.z).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_project_point_at_center() {
+        let model = get_sample_model();
+        // For Double Sphere, projecting from the origin (0,0,0) might not be well-defined
+        // depending on how d1 and denom are handled. Let's use a point very close to origin on Z axis.
+        let point_3d_on_z = Vector3::new(0.0, 0.0, 1e-9);
+        let result_origin = model.project(&point_3d_on_z, false);
+        // Depending on precision, this might project to cx,cy or be an error.
+        // If it projects, it should be very close to cx, cy.
+        if let Ok((p, _)) = result_origin {
+            assert_relative_eq!(p.x, model.intrinsics.cx, epsilon = 1e-3);
+            assert_relative_eq!(p.y, model.intrinsics.cy, epsilon = 1e-3);
+        } else {
+            // Or it could be an error if denom becomes too small or condition fails
+            assert!(matches!(result_origin, Err(CameraModelError::PointIsOutSideImage)));
+        }
+
+        // A point exactly at (0,0,0) for some models might lead to d1 = 0, denom = 0.
+        // The current implementation's check `denom < PRECISION` should catch this.
+        let result_exact_origin = model.project(&Vector3::new(0.0, 0.0, 0.0), false);
+        assert!(matches!(result_exact_origin, Err(CameraModelError::PointIsOutSideImage)), "Projecting (0,0,0) should ideally be an error or handled gracefully");
+    }
+
+    #[test]
+    fn test_project_point_behind_camera() {
+        let model = get_sample_model();
+        let point_3d = Vector3::new(0.1, 0.2, -1.0); // Point behind camera
+        let result = model.project(&point_3d, false);
+        assert!(matches!(result, Err(CameraModelError::PointIsOutSideImage)));
+    }
+
+    #[test]
+    fn test_validate_params_valid() {
+        let model = get_sample_model();
+        assert!(model.validate_params().is_ok());
+    }
+
+    #[test]
+    fn test_validate_params_invalid_alpha() {
+        let mut model = get_sample_model();
+        model.alpha = 0.0; // Invalid: alpha must be > 0
+        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+
+        model.alpha = 1.1; // Invalid: alpha must be <= 1
+        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+    }
+
+    #[test]
+    fn test_validate_params_invalid_xi() {
+        let mut model = get_sample_model();
+        model.xi = f64::NAN;
+        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+
+        model.xi = f64::INFINITY;
+        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+    }
+
+    #[test]
+    fn test_validate_params_invalid_intrinsics() {
+        let mut model = get_sample_model();
+        model.intrinsics.fx = 0.0; // Invalid: fx must be > 0 (checked by validation::validate_intrinsics)
+        assert!(matches!(model.validate_params(), Err(CameraModelError::FocalLengthMustBePositive)));
+    }
+
+    #[test]
+    fn test_getters() {
+        let model = get_sample_model();
+        let intrinsics = model.get_intrinsics();
+        assert_relative_eq!(intrinsics.fx, model.intrinsics.fx);
+        assert_relative_eq!(intrinsics.fy, model.intrinsics.fy);
+        assert_relative_eq!(intrinsics.cx, model.intrinsics.cx);
+        assert_relative_eq!(intrinsics.cy, model.intrinsics.cy);
+
+        let resolution = model.get_resolution();
+        assert_eq!(resolution.width, model.resolution.width);
+        assert_eq!(resolution.height, model.resolution.height);
+
+        let distortion = model.get_distortion();
+        assert_eq!(distortion.len(), 2);
+        assert_relative_eq!(distortion[0], model.xi);    // xi is first
+        assert_relative_eq!(distortion[1], model.alpha); // alpha is second
     }
 
     #[test]
