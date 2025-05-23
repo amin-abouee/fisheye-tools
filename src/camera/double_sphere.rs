@@ -1,3 +1,14 @@
+//! Double Sphere Camera Model Implementation
+//!
+//! This module implements the Double Sphere camera model, which is particularly useful
+//! for wide-angle and fisheye cameras. The model uses two sphere projections to handle
+//! the distortion characteristics of such cameras.
+//!
+//! # References
+//!
+//! The Double Sphere model is based on:
+//! "The Double Sphere Camera Model" by Vladyslav Usenko and Nikolaus Demmel
+
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use argmin::{
     core::{
@@ -13,25 +24,57 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
 
-// Cost function for optimization
+/// Cost function for Double Sphere camera model optimization.
+///
+/// This structure holds the 3D-2D point correspondences used during
+/// camera calibration optimization. It implements the necessary traits
+/// for use with the argmin optimization library.
 #[derive(Clone)]
 struct DoubleSphereOptimizationCost {
+    /// 3D points in camera coordinate system (3×N matrix)
     points3d: Matrix3xX<f64>,
+    /// Corresponding 2D points in image coordinates (2×N matrix)
     points2d: Matrix2xX<f64>,
 }
 
 impl DoubleSphereOptimizationCost {
+    /// Creates a new cost function for Double Sphere camera optimization.
+    ///
+    /// # Arguments
+    ///
+    /// * `points3d` - 3D points in camera coordinate system (3×N matrix)
+    /// * `points2d` - Corresponding 2D points in image coordinates (2×N matrix)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of 3D and 2D points don't match.
     pub fn new(points3d: Matrix3xX<f64>, points2d: Matrix2xX<f64>) -> Self {
         assert_eq!(points3d.ncols(), points2d.ncols());
         DoubleSphereOptimizationCost { points3d, points2d }
     }
 }
 
-// Implement Operator trait for Gauss-Newton
+/// Implementation of the Operator trait for Gauss-Newton optimization.
 impl Operator for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>; // [fx, fy, cx, cy, alpha, xi]
-    type Output = DVector<f64>; // Residuals vector
+    /// Parameter vector: [fx, fy, cx, cy, alpha, xi]
+    type Param = DVector<f64>;
+    /// Output residuals vector (2×N elements for N points)
+    type Output = DVector<f64>;
 
+    /// Applies the camera model to compute projection residuals.
+    ///
+    /// # Arguments
+    ///
+    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
+    ///
+    /// # Returns
+    ///
+    /// Vector of residuals between projected and observed 2D points.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the camera model parameters are invalid or
+    /// if projection fails for the given points.
     fn apply(&self, p: &Self::Param) -> Result<Self::Output, Error> {
         let num_points = self.points3d.ncols();
         let mut residuals = DVector::zeros(num_points * 2);
@@ -57,11 +100,25 @@ impl Operator for DoubleSphereOptimizationCost {
     }
 }
 
-// Implement Jacobian trait for Gauss-Newton
+/// Implementation of the Jacobian trait for Gauss-Newton optimization.
 impl Jacobian for DoubleSphereOptimizationCost {
     type Param = DVector<f64>;
     type Jacobian = DMatrix<f64>;
 
+    /// Computes the Jacobian matrix of residuals with respect to camera parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
+    ///
+    /// # Returns
+    ///
+    /// Jacobian matrix (2N×6) where N is the number of points and 6 is the number of parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the camera model parameters are invalid or
+    /// if projection fails for the given points.
     fn jacobian(&self, p: &Self::Param) -> Result<Self::Jacobian, Error> {
         let num_points = self.points3d.ncols();
         let mut jacobian = DMatrix::zeros(num_points * 2, 6); // 2 residuals per point, 6 parameters
@@ -86,11 +143,27 @@ impl Jacobian for DoubleSphereOptimizationCost {
     }
 }
 
-// Keep existing CostFunction implementation
+/// Implementation of the CostFunction trait for optimization.
 impl CostFunction for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>; // [fx, fy, cx, cy, alpha, xi]
-    type Output = f64; // Sum of squared errors
+    /// Parameter vector: [fx, fy, cx, cy, alpha, xi]
+    type Param = DVector<f64>;
+    /// Sum of squared errors
+    type Output = f64;
 
+    /// Computes the cost function as the sum of squared projection errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
+    ///
+    /// # Returns
+    ///
+    /// Total cost as the sum of squared residuals.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the camera model parameters are invalid or
+    /// if projection fails for the given points.
     fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
         let mut total_error_sq = 0.0;
         let model = DoubleSphereModel::new(&p)?;
@@ -110,11 +183,29 @@ impl CostFunction for DoubleSphereOptimizationCost {
     }
 }
 
-// Keep existing Gradient implementation
+/// Implementation of the Gradient trait for optimization.
 impl Gradient for DoubleSphereOptimizationCost {
     type Param = DVector<f64>;
-    type Gradient = DVector<f64>; // Gradient of the cost function (J^T * r)
+    /// Gradient of the cost function (J^T * r)
+    type Gradient = DVector<f64>;
 
+    /// Computes the gradient of the cost function.
+    ///
+    /// The gradient is computed as J^T * r, where J is the Jacobian matrix
+    /// and r is the residual vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
+    ///
+    /// # Returns
+    ///
+    /// Gradient vector with respect to the camera parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the camera model parameters are invalid or
+    /// if projection fails for the given points.
     fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
         let mut grad = DVector::zeros(6);
         let model = DoubleSphereModel::new(&p)?;
@@ -137,11 +228,29 @@ impl Gradient for DoubleSphereOptimizationCost {
     }
 }
 
-// Keep existing Hessian implementation
+/// Implementation of the Hessian trait for optimization.
 impl Hessian for DoubleSphereOptimizationCost {
     type Param = DVector<f64>;
-    type Hessian = DMatrix<f64>; // J^T * J
+    /// Hessian matrix approximation (J^T * J)
+    type Hessian = DMatrix<f64>;
 
+    /// Computes the Hessian matrix using the Gauss-Newton approximation.
+    ///
+    /// The Hessian is approximated as J^T * J, where J is the Jacobian matrix.
+    /// This is a common approximation used in non-linear least squares optimization.
+    ///
+    /// # Arguments
+    ///
+    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
+    ///
+    /// # Returns
+    ///
+    /// Approximate Hessian matrix (6×6).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the camera model parameters are invalid or
+    /// if projection fails for the given points.
     fn hessian(&self, p: &Self::Param) -> Result<Self::Hessian, Error> {
         let mut jtj = DMatrix::zeros(6, 6);
         let model = DoubleSphereModel::new(&p)?;
@@ -162,15 +271,44 @@ impl Hessian for DoubleSphereOptimizationCost {
     }
 }
 
+/// Double Sphere camera model implementation.
+///
+/// The Double Sphere model is designed for wide-angle and fisheye cameras.
+/// It uses two sphere projections to model the distortion characteristics
+/// of such cameras more accurately than traditional models.
+///
+/// # Parameters
+///
+/// * `intrinsics` - Camera intrinsic parameters (fx, fy, cx, cy)
+/// * `resolution` - Image resolution (width, height)
+/// * `alpha` - First distortion parameter, must be in (0, 1]
+/// * `xi` - Second distortion parameter, must be finite
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DoubleSphereModel {
+    /// Camera intrinsic parameters
     pub intrinsics: Intrinsics,
+    /// Image resolution
     pub resolution: Resolution,
+    /// First distortion parameter (0 < alpha <= 1)
     pub alpha: f64,
+    /// Second distortion parameter
     pub xi: f64,
 }
 
 impl DoubleSphereModel {
+    /// Creates a new Double Sphere model from a parameter vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `parameters` - Parameter vector [fx, fy, cx, cy, alpha, xi]
+    ///
+    /// # Returns
+    ///
+    /// A new DoubleSphereModel instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parameter vector doesn't have exactly 6 elements.
     fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
         let model = DoubleSphereModel {
             intrinsics: Intrinsics {
@@ -192,6 +330,16 @@ impl DoubleSphereModel {
         Ok(model)
     }
 
+    /// Checks if a 3D point can be projected using the Double Sphere model.
+    ///
+    /// # Arguments
+    ///
+    /// * `z` - Z-coordinate of the 3D point
+    /// * `d1` - Distance from origin to the point
+    ///
+    /// # Returns
+    ///
+    /// `true` if the point can be projected, `false` otherwise.
     fn check_projection_condition(&self, z: f64, d1: f64) -> bool {
         let w1 = match self.alpha <= 0.5 {
             true => self.alpha / (1.0 - self.alpha),
@@ -201,6 +349,15 @@ impl DoubleSphereModel {
         z > -w2 * d1
     }
 
+    /// Checks if a 2D point can be unprojected using the Double Sphere model.
+    ///
+    /// # Arguments
+    ///
+    /// * `r_squared` - Squared radial distance from the principal point
+    ///
+    /// # Returns
+    ///
+    /// `true` if the point can be unprojected, `false` otherwise.
     fn check_unprojection_condition(&self, r_squared: f64) -> bool {
         let mut condition = true;
         if self.alpha > 0.5 {
@@ -228,6 +385,22 @@ impl fmt::Debug for DoubleSphereModel {
 }
 
 impl CameraModel for DoubleSphereModel {
+    /// Projects a 3D point to 2D image coordinates using the Double Sphere model.
+    ///
+    /// # Arguments
+    ///
+    /// * `point_3d` - 3D point in camera coordinate system
+    /// * `compute_jacobian` - Whether to compute the Jacobian matrix
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// - The projected 2D point
+    /// - Optional Jacobian matrix (2×6) if `compute_jacobian` is true
+    ///
+    /// # Errors
+    ///
+    /// Returns `CameraModelError::PointIsOutSideImage` if the point cannot be projected.
     fn project(
         &self,
         point_3d: &Vector3<f64>,
@@ -291,6 +464,19 @@ impl CameraModel for DoubleSphereModel {
         Ok((Vector2::new(projected_x, projected_y), jacobian))
     }
 
+    /// Unprojects a 2D image point to a 3D ray direction using the Double Sphere model.
+    ///
+    /// # Arguments
+    ///
+    /// * `point_2d` - 2D point in image coordinates
+    ///
+    /// # Returns
+    ///
+    /// A normalized 3D vector representing the ray direction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CameraModelError::PointIsOutSideImage` if the point cannot be unprojected.
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
         const PRECISION: f64 = 1e-3;
 
@@ -333,6 +519,20 @@ impl CameraModel for DoubleSphereModel {
         Ok(point3d.normalize())
     }
 
+    /// Loads a Double Sphere camera model from a YAML file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the YAML file
+    ///
+    /// # Returns
+    ///
+    /// A new DoubleSphereModel instance loaded from the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns various `CameraModelError` variants if the file cannot be read,
+    /// parsed, or contains invalid parameters.
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
         let contents = fs::read_to_string(path)?;
         let docs = YamlLoader::load_from_str(&contents)?;
@@ -398,6 +598,16 @@ impl CameraModel for DoubleSphereModel {
         Ok(model)
     }
 
+    /// Saves the Double Sphere camera model to a YAML file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path where to save the YAML file
+    ///
+    /// # Errors
+    ///
+    /// Returns `CameraModelError::IOError` if the file cannot be written,
+    /// or `CameraModelError::YamlError` if serialization fails.
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         // Create the YAML structure using serde_yaml
         let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
@@ -447,6 +657,18 @@ impl CameraModel for DoubleSphereModel {
         Ok(())
     }
 
+    /// Validates the camera model parameters.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if all parameters are valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CameraModelError::InvalidParams` if any parameter is invalid:
+    /// - `alpha` must be in the range (0, 1]
+    /// - `xi` must be finite
+    /// - Intrinsic parameters must be valid (checked by `validation::validate_intrinsics`)
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
 
@@ -465,18 +687,54 @@ impl CameraModel for DoubleSphereModel {
         Ok(())
     }
 
+    /// Returns the image resolution.
+    ///
+    /// # Returns
+    ///
+    /// A copy of the Resolution struct containing width and height.
     fn get_resolution(&self) -> Resolution {
         self.resolution.clone()
     }
 
+    /// Returns the camera intrinsic parameters.
+    ///
+    /// # Returns
+    ///
+    /// A copy of the Intrinsics struct containing fx, fy, cx, cy.
     fn get_intrinsics(&self) -> Intrinsics {
         self.intrinsics.clone()
     }
 
+    /// Returns the distortion parameters.
+    ///
+    /// # Returns
+    ///
+    /// A vector containing [xi, alpha] distortion parameters.
     fn get_distortion(&self) -> Vec<f64> {
         vec![self.xi, self.alpha]
     }
 
+    /// Performs linear estimation of the Double Sphere model parameters.
+    ///
+    /// This method provides an initial estimate of the `alpha` parameter
+    /// while setting `xi` to 0.0. It's typically used as initialization
+    /// for non-linear optimization.
+    ///
+    /// # Arguments
+    ///
+    /// * `intrinsics` - Known camera intrinsic parameters
+    /// * `resolution` - Image resolution
+    /// * `points_2d` - 2D points in image coordinates (2×N matrix)
+    /// * `points_3d` - Corresponding 3D points in camera coordinates (3×N matrix)
+    ///
+    /// # Returns
+    ///
+    /// A new DoubleSphereModel with estimated parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CameraModelError::InvalidParams` if the number of 2D and 3D points don't match,
+    /// or `CameraModelError::NumericalError` if the linear system cannot be solved.
     fn linear_estimation(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
