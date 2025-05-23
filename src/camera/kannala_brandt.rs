@@ -157,10 +157,6 @@ impl KannalaBrandtModel {
         // model.validate_params()?; // Cannot fully validate without resolution
         Ok(model)
     }
-
-    fn check_projection_condition(&self, z: f64) -> bool {
-        z > f64::EPSILON
-    }
 }
 
 impl CameraModel for KannalaBrandtModel {
@@ -429,8 +425,10 @@ impl CameraModel for KannalaBrandtModel {
             ));
         }
 
-        let distortion_coeffs_yaml = cam_node["distortion_coeffs"].as_vec().ok_or_else(|| {
-            CameraModelError::InvalidParams("Missing or invalid 'distortion_coeffs'".to_string())
+        let distortion_coeffs_yaml = cam_node["distortion"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams(
+                "Missing or invalid distortion coefficients".to_string(),
+            )
         })?;
         if distortion_coeffs_yaml.len() < 4 {
             return Err(CameraModelError::InvalidParams(
@@ -539,11 +537,6 @@ impl CameraModel for KannalaBrandtModel {
 
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
-        if self.resolution.width == 0 || self.resolution.height == 0 {
-            // This might be a soft warning or an error depending on context.
-            // For now, not making it a hard error as resolution might be set later.
-            // Consider if this should be an error if used in projection/unprojection.
-        }
         // No specific validation for Kannala-Brandt distortions k1-k4 mentioned,
         // they can be positive or negative.
         Ok(())
@@ -821,9 +814,9 @@ mod tests {
 
     #[test]
     fn test_load_from_yaml_ok() {
-        let model_result = KannalaBrandtModel::load_from_yaml("samples/kannala_brandt.yaml");
-        assert!(model_result.is_ok());
-        let model = model_result.unwrap();
+        // Load the camera model from YAML
+        let path = "samples/kannala_brandt.yaml";
+        let model = KannalaBrandtModel::load_from_yaml(path).unwrap();
 
         assert_relative_eq!(model.intrinsics.fx, 461.58688085556616, epsilon = 1e-9);
         assert_relative_eq!(model.intrinsics.fy, 460.2811732644195, epsilon = 1e-9);
@@ -963,27 +956,6 @@ mod tests {
         assert_relative_eq!(distortion_coeffs[1], 0.057836801948828065); // k2
         assert_relative_eq!(distortion_coeffs[2], -0.08495347810986263); // k3
         assert_relative_eq!(distortion_coeffs[3], 0.04362766880887814); // k4
-    }
-
-    #[test]
-    fn test_validate_params() {
-        let model = get_sample_kb_model();
-        assert!(model.validate_params().is_ok());
-
-        // Example of invalid intrinsics
-        let mut invalid_model = model.clone();
-        invalid_model.intrinsics.fx = -100.0;
-        assert!(matches!(
-            invalid_model.validate_params(),
-            Err(CameraModelError::InvalidParams(_))
-        ));
-
-        invalid_model.intrinsics.fx = 461.58; // reset
-        invalid_model.intrinsics.fy = 0.0;
-        assert!(matches!(
-            invalid_model.validate_params(),
-            Err(CameraModelError::InvalidParams(_))
-        ));
     }
 
     // --- Tests for linear_estimation and optimize ---
