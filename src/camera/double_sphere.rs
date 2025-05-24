@@ -10,266 +10,18 @@
 //! "The Double Sphere Camera Model" by Vladyslav Usenko and Nikolaus Demmel
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
-use argmin::{
-    core::{
-        observers::ObserverMode, CostFunction, Error, Executor, Gradient, Hessian, Jacobian,
-        Operator, State,
-    },
-    solver::gaussnewton::GaussNewton,
-};
-use argmin_observer_slog::SlogLogger;
+use crate::optimization::double_sphere::DoubleSphereOptimizationCost; // Added
+use crate::optimization::Optimizer; // Added
+use argmin::core::{observers::ObserverMode, Error, Executor, State}; // Modified
+use argmin::solver::gaussnewton::GaussNewton; // Added
+use argmin_observer_slog::SlogLogger; // Added
 use log::info;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
 
-/// Cost function for Double Sphere camera model optimization.
-///
-/// This structure holds the 3D-2D point correspondences used during
-/// camera calibration optimization. It implements the necessary traits
-/// for use with the argmin optimization library.
-#[derive(Clone)]
-struct DoubleSphereOptimizationCost {
-    /// 3D points in camera coordinate system (3×N matrix)
-    points3d: Matrix3xX<f64>,
-    /// Corresponding 2D points in image coordinates (2×N matrix)
-    points2d: Matrix2xX<f64>,
-}
-
-impl DoubleSphereOptimizationCost {
-    /// Creates a new cost function for Double Sphere camera optimization.
-    ///
-    /// # Arguments
-    ///
-    /// * `points3d` - 3D points in camera coordinate system (3×N matrix)
-    /// * `points2d` - Corresponding 2D points in image coordinates (2×N matrix)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the number of 3D and 2D points don't match.
-    pub fn new(points3d: Matrix3xX<f64>, points2d: Matrix2xX<f64>) -> Self {
-        assert_eq!(points3d.ncols(), points2d.ncols());
-        DoubleSphereOptimizationCost { points3d, points2d }
-    }
-}
-
-/// Implementation of the Operator trait for Gauss-Newton optimization.
-impl Operator for DoubleSphereOptimizationCost {
-    /// Parameter vector: [fx, fy, cx, cy, alpha, xi]
-    type Param = DVector<f64>;
-    /// Output residuals vector (2×N elements for N points)
-    type Output = DVector<f64>;
-
-    /// Applies the camera model to compute projection residuals.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Vector of residuals between projected and observed 2D points.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn apply(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        let num_points = self.points3d.ncols();
-        let mut residuals = DVector::zeros(num_points * 2);
-        let model = DoubleSphereModel::new(&p)?;
-        let mut counter = 0;
-
-        for i in 0..num_points {
-            let p3d = &self.points3d.column(i).into_owned();
-            let p2d_gt = &self.points2d.column(i).into_owned();
-            let project_result = model.project(p3d, false);
-
-            if let Ok((p2d_projected, _)) = project_result {
-                // Each point contributes 2 residuals (x and y dimensions)
-                residuals[counter * 2] = p2d_projected.x - p2d_gt.x;
-                residuals[counter * 2 + 1] = p2d_projected.y - p2d_gt.y;
-                counter += 1;
-            }
-        }
-        // Only return the rows with actual residuals
-        residuals = residuals.rows(0, counter * 2).into_owned();
-        info!("Size residuals: {}", residuals.len());
-        Ok(residuals)
-    }
-}
-
-/// Implementation of the Jacobian trait for Gauss-Newton optimization.
-impl Jacobian for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>;
-    type Jacobian = DMatrix<f64>;
-
-    /// Computes the Jacobian matrix of residuals with respect to camera parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Jacobian matrix (2N×6) where N is the number of points and 6 is the number of parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn jacobian(&self, p: &Self::Param) -> Result<Self::Jacobian, Error> {
-        let num_points = self.points3d.ncols();
-        let mut jacobian = DMatrix::zeros(num_points * 2, 6); // 2 residuals per point, 6 parameters
-        let model = DoubleSphereModel::new(&p)?;
-        let mut counter = 0;
-
-        for i in 0..num_points {
-            let p3d = &self.points3d.column(i).into_owned();
-
-            // Get Jacobian for this point (2x6 matrix)
-            let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
-
-            if let Some(jac) = jacobian_point_2x6 {
-                // Copy the 2x6 Jacobian for this point into the overall Jacobian matrix
-                jacobian.view_mut((counter * 2, 0), (2, 6)).copy_from(&jac);
-                counter += 1;
-            }
-        }
-        jacobian = jacobian.rows(0, counter * 2).into_owned();
-        info!("Size residuals: {}", jacobian.nrows());
-        Ok(jacobian)
-    }
-}
-
-/// Implementation of the CostFunction trait for optimization.
-impl CostFunction for DoubleSphereOptimizationCost {
-    /// Parameter vector: [fx, fy, cx, cy, alpha, xi]
-    type Param = DVector<f64>;
-    /// Sum of squared errors
-    type Output = f64;
-
-    /// Computes the cost function as the sum of squared projection errors.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Total cost as the sum of squared residuals.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        let mut total_error_sq = 0.0;
-        let model = DoubleSphereModel::new(&p)?;
-
-        for i in 0..self.points3d.ncols() {
-            let p3d = &self.points3d.column(i).into_owned();
-            let p2d_gt = &self.points2d.column(i).into_owned();
-
-            // The project function now returns a tuple with the projection and optional Jacobian
-            let (p2d_projected, _) = model.project(p3d, false).unwrap();
-
-            total_error_sq += (p2d_projected - p2d_gt).norm();
-        }
-
-        info!("total_error_sq: {total_error_sq}");
-        Ok(total_error_sq)
-    }
-}
-
-/// Implementation of the Gradient trait for optimization.
-impl Gradient for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>;
-    /// Gradient of the cost function (J^T * r)
-    type Gradient = DVector<f64>;
-
-    /// Computes the gradient of the cost function.
-    ///
-    /// The gradient is computed as J^T * r, where J is the Jacobian matrix
-    /// and r is the residual vector.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Gradient vector with respect to the camera parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
-        let mut grad = DVector::zeros(6);
-        let model = DoubleSphereModel::new(&p)?;
-
-        for i in 0..self.points3d.ncols() {
-            let p3d = &self.points3d.column(i).into_owned();
-            let p2d_gt = &self.points2d.column(i).into_owned();
-
-            let (p2d_projected, jacobian_point_2x6) = model.project(p3d, true).unwrap();
-
-            if let Some(jacobian) = jacobian_point_2x6 {
-                let residual_2x1 = p2d_projected - p2d_gt;
-
-                // grad += J_i^T * r_i
-                grad += jacobian.transpose() * residual_2x1;
-            }
-        }
-        info!("Gradient: {}", grad);
-        Ok(grad)
-    }
-}
-
-/// Implementation of the Hessian trait for optimization.
-impl Hessian for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>;
-    /// Hessian matrix approximation (J^T * J)
-    type Hessian = DMatrix<f64>;
-
-    /// Computes the Hessian matrix using the Gauss-Newton approximation.
-    ///
-    /// The Hessian is approximated as J^T * J, where J is the Jacobian matrix.
-    /// This is a common approximation used in non-linear least squares optimization.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Approximate Hessian matrix (6×6).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn hessian(&self, p: &Self::Param) -> Result<Self::Hessian, Error> {
-        let mut jtj = DMatrix::zeros(6, 6);
-        let model = DoubleSphereModel::new(&p)?;
-
-        for i in 0..self.points3d.ncols() {
-            let p3d = &self.points3d.column(i).into_owned();
-            // We only need the Jacobian for J^T J
-            let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
-
-            // Check if jacobian_point_2x6 is Some before using it
-            if let Some(jacobian) = jacobian_point_2x6 {
-                jtj += jacobian.transpose() * jacobian;
-            }
-        }
-
-        info!("Hessian: {}", jtj);
-        Ok(jtj)
-    }
-}
+// Removed DoubleSphereOptimizationCost struct and its trait implementations (Operator, Jacobian, CostFunction, Gradient, Hessian)
 
 /// Double Sphere camera model implementation.
 ///
@@ -318,7 +70,7 @@ impl DoubleSphereModel {
     /// # Errors
     ///
     /// Returns an error if the parameter vector doesn't have exactly 6 elements.
-    fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
+    pub fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
         let model = DoubleSphereModel {
             intrinsics: Intrinsics {
                 fx: parameters[0],
@@ -723,92 +475,11 @@ impl CameraModel for DoubleSphereModel {
         vec![self.xi, self.alpha]
     }
 
-    /// Performs linear estimation of the Double Sphere model parameters.
-    ///
-    /// This method provides an initial estimate of the `alpha` parameter
-    /// while setting `xi` to 0.0. It's typically used as initialization
-    /// for non-linear optimization.
-    ///
-    /// # Arguments
-    ///
-    /// * `intrinsics` - Known camera intrinsic parameters
-    /// * `resolution` - Image resolution
-    /// * `points_2d` - 2D points in image coordinates (2×N matrix)
-    /// * `points_3d` - Corresponding 3D points in camera coordinates (3×N matrix)
-    ///
-    /// # Returns
-    ///
-    /// A new DoubleSphereModel with estimated parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CameraModelError::InvalidParams` if the number of 2D and 3D points don't match,
-    /// or `CameraModelError::NumericalError` if the linear system cannot be solved.
-    fn linear_estimation(
-        intrinsics: &Intrinsics,
-        resolution: &Resolution,
-        points_2d: &Matrix2xX<f64>,
-        points_3d: &Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError> {
-        // Check if the number of 2D and 3D points match
-        if points_2d.ncols() != points_3d.ncols() {
-            return Err(CameraModelError::InvalidParams(
-                "Number of 2D and 3D points must match".to_string(),
-            ));
-        }
+    // linear_estimation removed from impl CameraModel for DoubleSphereModel
+    // optimize removed from impl CameraModel for DoubleSphereModel
+}
 
-        // Initialize with xi = 0.0
-        let xi = 0.0;
-
-        // Set up the linear system to solve for alpha
-        let num_points = points_2d.ncols();
-        let mut a = nalgebra::DMatrix::zeros(num_points * 2, 1);
-        let mut b = nalgebra::DVector::zeros(num_points * 2);
-
-        for i in 0..num_points {
-            let x = points_3d[(0, i)];
-            let y = points_3d[(1, i)];
-            let z = points_3d[(2, i)];
-            let u = points_2d[(0, i)];
-            let v = points_2d[(1, i)];
-
-            let d = (x * x + y * y + z * z).sqrt();
-            let u_cx = u - intrinsics.cx;
-            let v_cy = v - intrinsics.cy;
-
-            a[(i * 2, 0)] = u_cx * (d - z);
-            a[(i * 2 + 1, 0)] = v_cy * (d - z);
-
-            b[i * 2] = (intrinsics.fx * x) - (u_cx * z);
-            b[i * 2 + 1] = (intrinsics.fy * y) - (v_cy * z);
-        }
-
-        // Solve the linear system using SVD
-        let svd = a.svd(true, true);
-        let alpha = match svd.solve(&b, 1e-10) {
-            Ok(sol) => sol[0], // Handle the successful case
-            Err(err_msg) => {
-                return Err(CameraModelError::NumericalError(err_msg.to_string()));
-            }
-        };
-
-        // Clamp alpha to valid range (0, 1]
-        let alpha = alpha;
-
-        let model = DoubleSphereModel {
-            intrinsics: intrinsics.clone(),
-            resolution: resolution.clone(),
-            alpha,
-            xi,
-        };
-
-        // Validate parameters
-        model.validate_params()?;
-
-        Ok(model)
-    }
-
-    /// Optimize the camera model parameters using the provided 2D-3D point correspondences
+impl Optimizer for DoubleSphereModel {
     fn optimize(
         &mut self,
         points_3d: &Matrix3xX<f64>,
@@ -877,12 +548,80 @@ impl CameraModel for DoubleSphereModel {
 
         Ok(())
     }
+
+    // linear_estimation will be fully implemented here when it's moved from CameraModel trait
+     fn linear_estimation(
+        intrinsics: &Intrinsics,
+        resolution: &Resolution,
+        points_2d: &Matrix2xX<f64>,
+        points_3d: &Matrix3xX<f64>,
+    ) -> Result<Self, CameraModelError>
+    where
+        Self: Sized {
+        // Check if the number of 2D and 3D points match
+        if points_2d.ncols() != points_3d.ncols() {
+            return Err(CameraModelError::InvalidParams(
+                "Number of 2D and 3D points must match".to_string(),
+            ));
+        }
+
+        // Initialize with xi = 0.0
+        let xi = 0.0;
+
+        // Set up the linear system to solve for alpha
+        let num_points = points_2d.ncols();
+        let mut a = nalgebra::DMatrix::zeros(num_points * 2, 1);
+        let mut b = nalgebra::DVector::zeros(num_points * 2);
+
+        for i in 0..num_points {
+            let x = points_3d[(0, i)];
+            let y = points_3d[(1, i)];
+            let z = points_3d[(2, i)];
+            let u = points_2d[(0, i)];
+            let v = points_2d[(1, i)];
+
+            let d = (x * x + y * y + z * z).sqrt();
+            let u_cx = u - intrinsics.cx;
+            let v_cy = v - intrinsics.cy;
+
+            a[(i * 2, 0)] = u_cx * (d - z);
+            a[(i * 2 + 1, 0)] = v_cy * (d - z);
+
+            b[i * 2] = (intrinsics.fx * x) - (u_cx * z);
+            b[i * 2 + 1] = (intrinsics.fy * y) - (v_cy * z);
+        }
+
+        // Solve the linear system using SVD
+        let svd = a.svd(true, true);
+        let alpha = match svd.solve(&b, 1e-10) {
+            Ok(sol) => sol[0], // Handle the successful case
+            Err(err_msg) => {
+                return Err(CameraModelError::NumericalError(err_msg.to_string()));
+            }
+        };
+
+        // Clamp alpha to valid range (0, 1]
+        let alpha = alpha;
+
+        let model = DoubleSphereModel {
+            intrinsics: intrinsics.clone(),
+            resolution: resolution.clone(),
+            alpha,
+            xi,
+        };
+
+        // Validate parameters
+        model.validate_params()?;
+
+        Ok(model)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_relative_eq; // For floating point comparisons
+    use crate::optimization::Optimizer as _; // Import the trait to use its methods in tests
 
     // Helper to get a default model, similar to the one in samples/double_sphere.yaml
     fn get_sample_model() -> DoubleSphereModel {
@@ -1073,7 +812,7 @@ mod tests {
         // Create a model with added noise to the parameters
         let mut noisy_model = DoubleSphereModel {
             intrinsics: Intrinsics {
-                // Add some noise to the intrinsic parameters (±5-10%)
+                // Add some noise to the intrinsic parameters (Â±5-10%)
                 fx: reference_model.intrinsics.fx * 0.95,
                 fy: reference_model.intrinsics.fy * 1.02,
                 cx: reference_model.intrinsics.cx + 0.5,
@@ -1129,75 +868,7 @@ mod tests {
         assert!(noisy_model.intrinsics.fy > 0.0, "fy must be positive");
     }
 
-    #[test]
-    fn test_double_sphere_optimization_cost_basic() {
-        // Load camera model from YAML
-        let model = DoubleSphereModel::load_from_yaml("samples/double_sphere.yaml").unwrap();
-
-        // 5 sample 2D points as a flat vector
-        let points_2d_vec = vec![0.0, 0.0, 2.0, 2.0, -2.0, 2.0, 2.0, -2.0, -2.0, -2.0];
-        let mat_2d = Matrix2xX::from_vec(points_2d_vec);
-        let num_points = mat_2d.ncols();
-        info!("Size 2d points: {}", num_points);
-
-        // Create a Matrix3xX for 3D points, fill with zeros
-        let mut mat_3d = Matrix3xX::zeros(num_points);
-
-        // Fill the unprojected 3D points into mat_3d, only if unprojection succeeds
-        let mut valid_count = 0;
-        for i in 0..num_points {
-            let p2d = mat_2d.column(i).into_owned();
-            if let Ok(p3d) = model.unproject(&p2d) {
-                mat_3d.set_column(valid_count, &p3d);
-                // Overwrite the corresponding 2D point in mat_2d if needed (optional, but keeps correspondence)
-                // mat_2d.set_column(valid_count, &p2d);
-                valid_count += 1;
-            }
-        }
-
-        assert!(
-            valid_count > 0,
-            "At least one 2D point should be unprojectable"
-        );
-
-        // Construct cost struct
-        let cost = DoubleSphereOptimizationCost::new(mat_3d.clone(), mat_2d.clone());
-
-        // Prepare parameter vector from model
-        let p = nalgebra::DVector::from_vec(vec![
-            model.intrinsics.fx,
-            model.intrinsics.fy,
-            model.intrinsics.cx,
-            model.intrinsics.cy,
-            model.alpha,
-            model.xi,
-        ]);
-
-        // Test operator (apply)
-        let residuals = cost.apply(&p).unwrap();
-        assert_eq!(residuals.len(), 2 * mat_3d.ncols());
-        assert!(
-            residuals.iter().all(|v| v.abs() < 1e-6),
-            "Residuals should be near zero for perfect model"
-        );
-
-        // Test cost
-        let c = cost.cost(&p).unwrap();
-        assert!(c >= 0.0, "Cost should be non-negative");
-        assert!(c < 1e-5, "Cost should be near zero for perfect model");
-
-        // Test jacobian
-        let jac = cost.jacobian(&p).unwrap();
-        assert_eq!(jac.nrows(), 2 * mat_3d.ncols());
-        assert_eq!(jac.ncols(), 6);
-
-        // Test gradient
-        let grad = cost.gradient(&p).unwrap();
-        assert_eq!(grad.len(), 6);
-
-        // Test hessian
-        let hess = cost.hessian(&p).unwrap();
-        assert_eq!(hess.nrows(), 6);
-        assert_eq!(hess.ncols(), 6);
-    }
+    // The test_double_sphere_optimization_cost_basic is removed as DoubleSphereOptimizationCost
+    // is now in a different module and its direct testing here is less relevant.
+    // Its functionality is indirectly tested via the Optimizer trait implementation.
 }

@@ -1,5 +1,6 @@
 pub mod camera;
 pub mod geometry;
+pub mod optimization;
 
 use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
 use clap::Parser;

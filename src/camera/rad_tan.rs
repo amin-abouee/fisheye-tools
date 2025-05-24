@@ -1,6 +1,12 @@
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
+use crate::optimization::rad_tan::RadTanOptimizationCost; // Added
+use crate::optimization::Optimizer; // Added
 use nalgebra::{DMatrix, DVector, Matrix2, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
+use argmin::core::{observers::ObserverMode, Executor, State, Error as ArgminError}; // Added
+use argmin::solver::gaussnewton::GaussNewton; // Added
+use argmin_observer_slog::SlogLogger; // Added
+use log::info; // Added
 use std::fs;
 use std::io::Write;
 use yaml_rust::YamlLoader;
@@ -376,12 +382,108 @@ impl CameraModel for RadTanModel {
         self.distortion.to_vec()
     }
 
+    // linear_estimation removed from impl CameraModel for RadTanModel
+    // optimize removed from impl CameraModel for RadTanModel
+}
+
+impl Optimizer for RadTanModel {
+    fn optimize(
+        &mut self,
+        points_3d: &Matrix3xX<f64>,
+        points_2d: &Matrix2xX<f64>,
+        verbose: bool,
+    ) -> Result<(), CameraModelError> {
+        if points_3d.ncols() != points_2d.ncols() {
+            return Err(CameraModelError::InvalidParams(
+                "Number of 2D and 3D points must match".to_string(),
+            ));
+        }
+        if points_3d.ncols() == 0 {
+            return Err(CameraModelError::InvalidParams(
+                "Points arrays cannot be empty".to_string(),
+            ));
+        }
+
+        let cost_function =
+            RadTanOptimizationCost::new(points_3d.clone(), points_2d.clone());
+        
+        // Initial parameters: fx, fy, cx, cy, k1, k2, p1, p2, k3
+        let initial_params_vec = vec![
+            self.intrinsics.fx,
+            self.intrinsics.fy,
+            self.intrinsics.cx,
+            self.intrinsics.cy,
+            self.distortion[0], // k1
+            self.distortion[1], // k2
+            self.distortion[2], // p1
+            self.distortion[3], // p2
+            self.distortion[4], // k3
+        ];
+        let init_param: DVector<f64> = DVector::from_vec(initial_params_vec);
+
+        let solver = GaussNewton::new();
+
+        let mut executor_builder = Executor::new(cost_function, solver)
+            .configure(|state: &mut State<_, _, _, _, _, _>| state.param(init_param).max_iters(100));
+
+        if verbose {
+            executor_builder =
+                executor_builder.add_observer(SlogLogger::term(), ObserverMode::Always);
+            info!("Starting RadTanModel optimization with GaussNewton...");
+        } else {
+            executor_builder =
+                executor_builder.add_observer(SlogLogger::term(), ObserverMode::NewBest);
+        }
+        
+        let res = executor_builder.run().map_err(|e: ArgminError| {
+            CameraModelError::NumericalError(format!("Argmin optimization failed: {}", e))
+        })?;
+
+        if verbose {
+            info!("Optimization finished: \n{}", res);
+            info!("Termination status: {:?}", res.state().termination_status);
+        }
+        
+        // Check if Jacobian was implemented. If not, optimization might not yield meaningful results.
+        // For now, we update parameters regardless, as per subtask structure.
+        if res.state().best_param.is_none() {
+             // This case can happen if max_iters is 0 or if some other issue occurs in argmin
+            return Err(CameraModelError::NumericalError(
+                "Optimization did not yield a best parameter set.".to_string()
+            ));
+        }
+
+        let best_params_dvec = res.state().get_best_param().unwrap(); // Already checked for None
+
+        if best_params_dvec.len() == 9 {
+            self.intrinsics.fx = best_params_dvec[0];
+            self.intrinsics.fy = best_params_dvec[1];
+            self.intrinsics.cx = best_params_dvec[2];
+            self.intrinsics.cy = best_params_dvec[3];
+            self.distortion[0] = best_params_dvec[4]; // k1
+            self.distortion[1] = best_params_dvec[5]; // k2
+            self.distortion[2] = best_params_dvec[6]; // p1
+            self.distortion[3] = best_params_dvec[7]; // p2
+            self.distortion[4] = best_params_dvec[8]; // k3
+            self.validate_params()?;
+        } else {
+            return Err(CameraModelError::NumericalError(
+                "Optimization returned incorrect number of parameters.".to_string()
+            ));
+        }
+        Ok(())
+    }
+
     fn linear_estimation(
         intrinsics: &Intrinsics,
         resolution: &Resolution,
         points_2d: &Matrix2xX<f64>,
         points_3d: &Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError> {
+    ) -> Result<Self, CameraModelError>
+    where
+        Self: Sized,
+    {
+        // Duplicating implementation from CameraModel trait
         if points_2d.ncols() != points_3d.ncols() {
             return Err(CameraModelError::InvalidParams(
                 "Number of 2D and 3D points must match".to_string(),
@@ -389,29 +491,23 @@ impl CameraModel for RadTanModel {
         }
 
         let n_points = points_2d.ncols();
-
-        // Set up matrices for solving the system: A * x = b
-        // Where x will contain the distortion parameters k1, k2, k3
         let mut a = nalgebra::DMatrix::zeros(n_points * 2, 3);
         let mut b = nalgebra::DVector::zeros(n_points * 2);
 
         for i in 0..n_points {
-            let x = points_3d[(0, i)]; // X
-            let y = points_3d[(1, i)]; // Y
-            let z = points_3d[(2, i)]; // Z
-            let u = points_2d[(0, i)]; // u
-            let v = points_2d[(1, i)]; // v
+            let x = points_3d[(0, i)]; 
+            let y = points_3d[(1, i)]; 
+            let z = points_3d[(2, i)]; 
+            let u = points_2d[(0, i)]; 
+            let v = points_2d[(1, i)]; 
 
-            // Calculate normalized image coordinates
             let x_prime = x / z;
             let y_prime = y / z;
 
-            // Calculate radial terms
             let r2 = x_prime * x_prime + y_prime * y_prime;
             let r4 = r2 * r2;
             let r6 = r4 * r2;
 
-            // Fill matrix A
             a[(i * 2, 0)] = r2;
             a[(i * 2, 1)] = r4;
             a[(i * 2, 2)] = r6;
@@ -419,57 +515,41 @@ impl CameraModel for RadTanModel {
             a[(i * 2 + 1, 1)] = r4;
             a[(i * 2 + 1, 2)] = r6;
 
-            // Fill vector b
             b[i * 2] = (u - intrinsics.cx) / (intrinsics.fx * x_prime) - 1.0;
             b[i * 2 + 1] = (v - intrinsics.cy) / (intrinsics.fy * y_prime) - 1.0;
         }
 
-        // Solve Ax = b for x using SVD
-        // A: (2*num_points) x 3
-        // x: 3 x 1 (vector)
-        // b: (2*num_points) x 1 (vector)
         let svd = a.svd(true, true);
-
-        let x = match svd.solve(&b, 1e-10) {
-            Ok(sol) => sol, // Handle the successful case
+        let x_coeffs = match svd.solve(&b, 1e-10) {
+            Ok(sol) => sol,
             Err(err_msg) => {
                 return Err(CameraModelError::NumericalError(err_msg.to_string()));
             }
         };
 
-        // Create the model with the computed distortion parameters
         let mut distortion = [0.0; 5];
-        distortion[0] = x[0]; // k1
-        distortion[1] = x[1]; // k2
-        distortion[4] = x[2]; // k3
-        distortion[2] = 0.0; // p1
-        distortion[3] = 0.0; // p2
+        distortion[0] = x_coeffs[0]; 
+        distortion[1] = x_coeffs[1]; 
+        distortion[4] = x_coeffs[2]; 
+        distortion[2] = 0.0; 
+        distortion[3] = 0.0; 
 
         let model = RadTanModel {
             intrinsics: intrinsics.clone(),
             resolution: resolution.clone(),
             distortion,
         };
-
-        // Validate parameters
         model.validate_params()?;
-
         Ok(model)
-    }
-
-    fn optimize(
-        &mut self,
-        _points_3d: &Matrix3xX<f64>,
-        _points_2d: &Matrix2xX<f64>,
-        _verbose: bool,
-    ) -> Result<(), CameraModelError> {
-        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimization::Optimizer as _; // Added for testing Optimizer trait methods
+
+    // It seems `use crate::optimization::Optimizer as _;` was already added above, which is good.
 
     #[test]
     fn test_radtan_load_from_yaml() {

@@ -73,15 +73,7 @@ pub trait CameraModel {
     /// Unproject 2D image coordinates to a 3D ray
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError>;
 
-    /// Linear estimation of the camera model with intrinsics and 2D-3D correspondences
-    fn linear_estimation(
-        intrinsics: &Intrinsics,
-        resolution: &Resolution,
-        points_2d: &Matrix2xX<f64>,
-        points_3d: &Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError>
-    where
-        Self: Sized;
+    // Removed linear_estimation from trait
 
     /// Load camera parameters from a YAML file
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError>
@@ -102,12 +94,7 @@ pub trait CameraModel {
     /// Get the distortion parameters of the camera
     fn get_distortion(&self) -> Vec<f64>;
 
-    fn optimize(
-        &mut self,
-        points_3d: &Matrix3xX<f64>,
-        points_2d: &Matrix2xX<f64>,
-        verbose: bool,
-    ) -> Result<(), CameraModelError>;
+    // Removed optimize from trait
 }
 
 /// Common validation functions for camera parameters
