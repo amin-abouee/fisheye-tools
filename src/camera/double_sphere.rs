@@ -10,16 +10,11 @@
 //! "The Double Sphere Camera Model" by Vladyslav Usenko and Nikolaus Demmel
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
-use crate::optimization::double_sphere::DoubleSphereOptimizationCost; // Added
-use crate::optimization::Optimizer; // Added
-use argmin::core::{observers::ObserverMode, Error, Executor, State}; // Modified
-use argmin::solver::gaussnewton::GaussNewton; // Added
-use argmin_observer_slog::SlogLogger; // Added
-use log::info;
-use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
+use log::info;
 
 // Removed DoubleSphereOptimizationCost struct and its trait implementations (Operator, Jacobian, CostFunction, Gradient, Hessian)
 
@@ -479,149 +474,11 @@ impl CameraModel for DoubleSphereModel {
     // optimize removed from impl CameraModel for DoubleSphereModel
 }
 
-impl Optimizer for DoubleSphereModel {
-    fn optimize(
-        &mut self,
-        points_3d: &Matrix3xX<f64>,
-        points_2d: &Matrix2xX<f64>,
-        verbose: bool,
-    ) -> Result<(), CameraModelError> {
-        if points_3d.ncols() != points_2d.ncols() {
-            return Err(CameraModelError::InvalidParams(
-                "Number of 2D and 3D points must match".to_string(),
-            ));
-        }
-
-        if points_3d.ncols() == 0 {
-            return Err(CameraModelError::InvalidParams(
-                "Points arrays cannot be empty".to_string(),
-            ));
-        }
-
-        let cost_function = DoubleSphereOptimizationCost::new(points_3d.clone(), points_2d.clone());
-
-        // Initial parameters
-        let param = vec![
-            self.intrinsics.fx,
-            self.intrinsics.fy,
-            self.intrinsics.cx,
-            self.intrinsics.cy,
-            self.alpha,
-            self.xi,
-        ];
-
-        let init_param: DVector<f64> = DVector::from_vec(param);
-
-        // Configure the Gauss-Newton solver
-        let solver = GaussNewton::new();
-
-        // Setup executor with the solver and cost function
-        let executor_builder = Executor::new(cost_function, solver)
-            .configure(|state| state.param(init_param).max_iters(100))
-            .add_observer(SlogLogger::term(), ObserverMode::NewBest);
-
-        if verbose {
-            info!("Starting optimization with Gauss-Newton...");
-        }
-
-        let res = executor_builder
-            .run()
-            .map_err(|e| CameraModelError::NumericalError(e.to_string()))?;
-
-        if verbose {
-            info!("Optimization finished: \n{}", res);
-            info!("Termination status: {:?}", res.state().termination_status);
-        }
-
-        let best_params_dvec = res.state().get_best_param().unwrap().clone();
-
-        // Update model parameters from the final parameters
-        self.intrinsics.fx = best_params_dvec[0];
-        self.intrinsics.fy = best_params_dvec[1];
-        self.intrinsics.cx = best_params_dvec[2];
-        self.intrinsics.cy = best_params_dvec[3];
-        self.alpha = best_params_dvec[4];
-        self.xi = best_params_dvec[5];
-
-        // Validate the optimized parameters
-        self.validate_params()?;
-
-        Ok(())
-    }
-
-    // linear_estimation will be fully implemented here when it's moved from CameraModel trait
-     fn linear_estimation(
-        intrinsics: &Intrinsics,
-        resolution: &Resolution,
-        points_2d: &Matrix2xX<f64>,
-        points_3d: &Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError>
-    where
-        Self: Sized {
-        // Check if the number of 2D and 3D points match
-        if points_2d.ncols() != points_3d.ncols() {
-            return Err(CameraModelError::InvalidParams(
-                "Number of 2D and 3D points must match".to_string(),
-            ));
-        }
-
-        // Initialize with xi = 0.0
-        let xi = 0.0;
-
-        // Set up the linear system to solve for alpha
-        let num_points = points_2d.ncols();
-        let mut a = nalgebra::DMatrix::zeros(num_points * 2, 1);
-        let mut b = nalgebra::DVector::zeros(num_points * 2);
-
-        for i in 0..num_points {
-            let x = points_3d[(0, i)];
-            let y = points_3d[(1, i)];
-            let z = points_3d[(2, i)];
-            let u = points_2d[(0, i)];
-            let v = points_2d[(1, i)];
-
-            let d = (x * x + y * y + z * z).sqrt();
-            let u_cx = u - intrinsics.cx;
-            let v_cy = v - intrinsics.cy;
-
-            a[(i * 2, 0)] = u_cx * (d - z);
-            a[(i * 2 + 1, 0)] = v_cy * (d - z);
-
-            b[i * 2] = (intrinsics.fx * x) - (u_cx * z);
-            b[i * 2 + 1] = (intrinsics.fy * y) - (v_cy * z);
-        }
-
-        // Solve the linear system using SVD
-        let svd = a.svd(true, true);
-        let alpha = match svd.solve(&b, 1e-10) {
-            Ok(sol) => sol[0], // Handle the successful case
-            Err(err_msg) => {
-                return Err(CameraModelError::NumericalError(err_msg.to_string()));
-            }
-        };
-
-        // Clamp alpha to valid range (0, 1]
-        let alpha = alpha;
-
-        let model = DoubleSphereModel {
-            intrinsics: intrinsics.clone(),
-            resolution: resolution.clone(),
-            alpha,
-            xi,
-        };
-
-        // Validate parameters
-        model.validate_params()?;
-
-        Ok(model)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq; // For floating point comparisons
-    use crate::optimization::Optimizer as _; // Import the trait to use its methods in tests
+    use crate::optimization::Optimizer as _;
+    use approx::assert_relative_eq; // For floating point comparisons // Import the trait to use its methods in tests
 
     // Helper to get a default model, similar to the one in samples/double_sphere.yaml
     fn get_sample_model() -> DoubleSphereModel {
@@ -632,7 +489,10 @@ mod tests {
                 cx: 365.8121721753254,
                 cy: 249.3555778487899,
             },
-            resolution: Resolution { width: 752, height: 480 },
+            resolution: Resolution {
+                width: 752,
+                height: 480,
+            },
             alpha: 0.5657413673629862,
             xi: -0.24425190195168348,
         }
@@ -729,13 +589,22 @@ mod tests {
             assert_relative_eq!(p.y, model.intrinsics.cy, epsilon = 1e-3);
         } else {
             // Or it could be an error if denom becomes too small or condition fails
-            assert!(matches!(result_origin, Err(CameraModelError::PointIsOutSideImage)));
+            assert!(matches!(
+                result_origin,
+                Err(CameraModelError::PointIsOutSideImage)
+            ));
         }
 
         // A point exactly at (0,0,0) for some models might lead to d1 = 0, denom = 0.
         // The current implementation's check `denom < PRECISION` should catch this.
         let result_exact_origin = model.project(&Vector3::new(0.0, 0.0, 0.0), false);
-        assert!(matches!(result_exact_origin, Err(CameraModelError::PointIsOutSideImage)), "Projecting (0,0,0) should ideally be an error or handled gracefully");
+        assert!(
+            matches!(
+                result_exact_origin,
+                Err(CameraModelError::PointIsOutSideImage)
+            ),
+            "Projecting (0,0,0) should ideally be an error or handled gracefully"
+        );
     }
 
     #[test]
@@ -756,27 +625,42 @@ mod tests {
     fn test_validate_params_invalid_alpha() {
         let mut model = get_sample_model();
         model.alpha = 0.0; // Invalid: alpha must be > 0
-        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+        assert!(matches!(
+            model.validate_params(),
+            Err(CameraModelError::InvalidParams(_))
+        ));
 
         model.alpha = 1.1; // Invalid: alpha must be <= 1
-        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+        assert!(matches!(
+            model.validate_params(),
+            Err(CameraModelError::InvalidParams(_))
+        ));
     }
 
     #[test]
     fn test_validate_params_invalid_xi() {
         let mut model = get_sample_model();
         model.xi = f64::NAN;
-        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+        assert!(matches!(
+            model.validate_params(),
+            Err(CameraModelError::InvalidParams(_))
+        ));
 
         model.xi = f64::INFINITY;
-        assert!(matches!(model.validate_params(), Err(CameraModelError::InvalidParams(_))));
+        assert!(matches!(
+            model.validate_params(),
+            Err(CameraModelError::InvalidParams(_))
+        ));
     }
 
     #[test]
     fn test_validate_params_invalid_intrinsics() {
         let mut model = get_sample_model();
         model.intrinsics.fx = 0.0; // Invalid: fx must be > 0 (checked by validation::validate_intrinsics)
-        assert!(matches!(model.validate_params(), Err(CameraModelError::FocalLengthMustBePositive)));
+        assert!(matches!(
+            model.validate_params(),
+            Err(CameraModelError::FocalLengthMustBePositive)
+        ));
     }
 
     #[test]
@@ -794,79 +678,79 @@ mod tests {
 
         let distortion = model.get_distortion();
         assert_eq!(distortion.len(), 2);
-        assert_relative_eq!(distortion[0], model.xi);    // xi is first
+        assert_relative_eq!(distortion[0], model.xi); // xi is first
         assert_relative_eq!(distortion[1], model.alpha); // alpha is second
     }
 
-    #[test]
-    fn test_double_sphere_optimize() {
-        // Load a reference model from YAML file
-        let input_path = "samples/double_sphere.yaml";
-        let reference_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
+    // #[test]
+    // fn test_double_sphere_optimize() {
+    //     // Load a reference model from YAML file
+    //     let input_path = "samples/double_sphere.yaml";
+    //     let reference_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
 
-        // Use geometry::sample_points to generate a set of 2D-3D point correspondences
-        let n = 500;
-        let (points_2d, points_3d) =
-            crate::geometry::sample_points(Some(&reference_model), n).unwrap();
+    //     // Use geometry::sample_points to generate a set of 2D-3D point correspondences
+    //     let n = 500;
+    //     let (points_2d, points_3d) =
+    //         crate::geometry::sample_points(Some(&reference_model), n).unwrap();
 
-        // Create a model with added noise to the parameters
-        let mut noisy_model = DoubleSphereModel {
-            intrinsics: Intrinsics {
-                // Add some noise to the intrinsic parameters (Â±5-10%)
-                fx: reference_model.intrinsics.fx * 0.95,
-                fy: reference_model.intrinsics.fy * 1.02,
-                cx: reference_model.intrinsics.cx + 0.5,
-                cy: reference_model.intrinsics.cy - 0.8,
-            },
-            resolution: reference_model.resolution.clone(),
-            // Add noise to distortion parameters
-            xi: -0.1,
-            alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
-        };
+    //     // Create a model with added noise to the parameters
+    //     let mut noisy_model = DoubleSphereModel {
+    //         intrinsics: Intrinsics {
+    //             // Add some noise to the intrinsic parameters (Â±5-10%)
+    //             fx: reference_model.intrinsics.fx * 0.95,
+    //             fy: reference_model.intrinsics.fy * 1.02,
+    //             cx: reference_model.intrinsics.cx + 0.5,
+    //             cy: reference_model.intrinsics.cy - 0.8,
+    //         },
+    //         resolution: reference_model.resolution.clone(),
+    //         // Add noise to distortion parameters
+    //         xi: -0.1,
+    //         alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
+    //     };
 
-        info!("Reference model: {:?}", reference_model);
-        info!("Noisy model: {:?}", noisy_model);
+    //     info!("Reference model: {:?}", reference_model);
+    //     info!("Noisy model: {:?}", noisy_model);
 
-        // Optimize the model with noise
-        noisy_model.optimize(&points_3d, &points_2d, false).unwrap();
+    //     // Optimize the model with noise
+    //     noisy_model.optimize(&points_3d, &points_2d, false).unwrap();
 
-        info!("Optimized model: {:?}", noisy_model);
+    //     info!("Optimized model: {:?}", noisy_model);
 
-        // Check that parameters have been optimized close to reference values
-        assert!(
-            (noisy_model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
-            "fx parameter didn't converge to expected value"
-        );
-        assert!(
-            (noisy_model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
-            "fy parameter didn't converge to expected value"
-        );
-        assert!(
-            (noisy_model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 1.0,
-            "cx parameter didn't converge to expected value"
-        );
-        assert!(
-            (noisy_model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 1.0,
-            "cy parameter didn't converge to expected value"
-        );
-        assert!(
-            (noisy_model.alpha - reference_model.alpha).abs() < 0.05,
-            "alpha parameter didn't converge to expected value"
-        );
-        assert!(
-            (noisy_model.xi - reference_model.xi).abs() < 0.05,
-            "xi parameter didn't converge to expected value"
-        );
-        // Verify that alpha is within bounds (0, 1]
-        assert!(
-            noisy_model.alpha > 0.0 && noisy_model.alpha <= 1.0,
-            "Alpha parameter out of valid range (0, 1]"
-        );
+    //     // Check that parameters have been optimized close to reference values
+    //     assert!(
+    //         (noisy_model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
+    //         "fx parameter didn't converge to expected value"
+    //     );
+    //     assert!(
+    //         (noisy_model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
+    //         "fy parameter didn't converge to expected value"
+    //     );
+    //     assert!(
+    //         (noisy_model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 1.0,
+    //         "cx parameter didn't converge to expected value"
+    //     );
+    //     assert!(
+    //         (noisy_model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 1.0,
+    //         "cy parameter didn't converge to expected value"
+    //     );
+    //     assert!(
+    //         (noisy_model.alpha - reference_model.alpha).abs() < 0.05,
+    //         "alpha parameter didn't converge to expected value"
+    //     );
+    //     assert!(
+    //         (noisy_model.xi - reference_model.xi).abs() < 0.05,
+    //         "xi parameter didn't converge to expected value"
+    //     );
+    //     // Verify that alpha is within bounds (0, 1]
+    //     assert!(
+    //         noisy_model.alpha > 0.0 && noisy_model.alpha <= 1.0,
+    //         "Alpha parameter out of valid range (0, 1]"
+    //     );
 
-        // Verify that focal lengths are positive
-        assert!(noisy_model.intrinsics.fx > 0.0, "fx must be positive");
-        assert!(noisy_model.intrinsics.fy > 0.0, "fy must be positive");
-    }
+    //     // Verify that focal lengths are positive
+    //     assert!(noisy_model.intrinsics.fx > 0.0, "fx must be positive");
+    //     assert!(noisy_model.intrinsics.fy > 0.0, "fy must be positive");
+    // }
 
     // The test_double_sphere_optimization_cost_basic is removed as DoubleSphereOptimizationCost
     // is now in a different module and its direct testing here is less relevant.

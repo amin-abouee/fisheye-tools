@@ -3,10 +3,13 @@ pub mod geometry;
 pub mod optimization;
 
 use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
+use crate::optimization::{Optimizer};
+// , DoubleSphereOptimizationCost, KannalaBrandtOptimizationCost, RadTanOptimizationCost};
 use clap::Parser;
-use flexi_logger::{detailed_format, colored_detailed_format, Duplicate, FileSpec, Logger};
+use flexi_logger::{colored_detailed_format, detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
+use optimization::{DoubleSphereOptimizationCost, RadTanOptimizationCost};
 use std::path::PathBuf; // Use PathBuf for paths
 
 /// Simple program to demonstrate reading input/output model paths from args
@@ -55,11 +58,11 @@ fn create_output_model(
     input_resolution: &Resolution,
     points_2d: &Matrix2xX<f64>,
     points_3d: &Matrix3xX<f64>,
-) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
-    let output_model: Box<dyn CameraModel> = match output_model_type {
+) -> Result<Box<dyn Optimizer>, Box<dyn std::error::Error>> {
+    let output_model: Box<dyn Optimizer> = match output_model_type {
         "rad_tan" => {
             info!("Estimated init params: RadTan");
-            Box::new(RadTanModel::linear_estimation(
+            Box::new(RadTanOptimizationCost::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
                 &points_2d,
@@ -68,7 +71,7 @@ fn create_output_model(
         }
         "double_sphere" => {
             info!("Estimated init params: DoubleSphere");
-            Box::new(DoubleSphereModel::linear_estimation(
+            Box::new(DoubleSphereOptimizationCost::linear_estimation(
                 &input_intrinsic,
                 &input_resolution,
                 &points_2d,
@@ -102,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .format_for_stdout(colored_detailed_format)
         // Set custom color palette for different log levels
         // Format: "error;warn;info;debug;trace"
-        // Using ANSI color codes: 
+        // Using ANSI color codes:
         // 196=bright red, 208=orange, 76=green, 39=cyan, 178=gold
         .set_palette("196;208;76;39;178".to_string())
         .start()?;
@@ -143,9 +146,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     output_model.optimize(&points_3d, &points_2d, true).unwrap();
 
     info!("Output Model Parameters:");
-    info!("Intrinsics: {:?}", output_model.get_intrinsics());
-    info!("Resolution: {:?}", output_model.get_resolution());
-    info!("Resolution: {:?}", output_model.get_distortion());
+    // info!("Intrinsics: {:?}", output_model.get_intrinsics());
+    // info!("Resolution: {:?}", output_model.get_resolution());
+    // info!("Resolution: {:?}", output_model.get_distortion());
 
     Ok(())
 }
