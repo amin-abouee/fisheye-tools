@@ -8,23 +8,12 @@ pub use double_sphere::DoubleSphereOptimizationCost;
 pub use kannala_brandt::KannalaBrandtOptimizationCost;
 pub use rad_tan::RadTanOptimizationCost;
 
-use crate::camera::{CameraModelError, Intrinsics, Resolution};
-use nalgebra::{Matrix2xX, Matrix3xX};
+use crate::camera::{CameraModelError};
 
 pub trait Optimizer {
-    fn optimize(
-        &mut self,
-        points_3d: &Matrix3xX<f64>,
-        points_2d: &Matrix2xX<f64>,
-        verbose: bool,
-    ) -> Result<(), CameraModelError>;
+    fn optimize(&mut self, verbose: bool) -> Result<(), CameraModelError>;
 
-    fn linear_estimation(
-        intrinsics: &Intrinsics,
-        resolution: &Resolution,
-        points_2d: &Matrix2xX<f64>,
-        points_3d: &Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError>
+    fn linear_estimation(&mut self,) -> Result<(), CameraModelError>
     where
         Self: Sized;
 }
