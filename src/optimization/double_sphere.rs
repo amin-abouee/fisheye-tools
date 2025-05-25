@@ -12,7 +12,7 @@ use argmin::{
 };
 // use argmin::solver::gaussnewton::GaussNewton; // Added
 use argmin_observer_slog::SlogLogger; // Added
-use log::info;
+use log::{info, warn};
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX};
 
 /// Cost function for Double Sphere camera model optimization.
@@ -203,13 +203,17 @@ impl Operator for DoubleSphereOptimizationCost {
         for i in 0..num_points {
             let p3d = &self.points3d.column(i).into_owned();
             let p2d_gt = &self.points2d.column(i).into_owned();
-            let project_result = model.project(p3d, false);
+            // let project_result = model.project(p3d, false);
 
-            if let Ok((p2d_projected, _)) = project_result {
-                // Each point contributes 2 residuals (x and y dimensions)
-                residuals[counter * 2] = p2d_projected.x - p2d_gt.x;
-                residuals[counter * 2 + 1] = p2d_projected.y - p2d_gt.y;
-                counter += 1;
+            match model.project(p3d, false) {
+                Ok((p2d_projected, _)) => { // Corrected destructuring here
+                    residuals[counter * 2] = p2d_projected.x - p2d_gt.x;
+                    residuals[counter * 2 + 1] = p2d_projected.y - p2d_gt.y;
+                    counter += 1;
+                }
+                Err(err_msg) => {
+                    warn!("Projection failed for point {}: {}", i, err_msg);
+                }
             }
         }
         // Only return the rows with actual residuals
@@ -248,14 +252,30 @@ impl Jacobian for DoubleSphereOptimizationCost {
         for i in 0..num_points {
             let p3d = &self.points3d.column(i).into_owned();
 
-            // Get Jacobian for this point (2x6 matrix)
-            let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
 
-            if let Some(jac) = jacobian_point_2x6 {
-                // Copy the 2x6 Jacobian for this point into the overall Jacobian matrix
-                jacobian.view_mut((counter * 2, 0), (2, 6)).copy_from(&jac);
-                counter += 1;
+            match model.project(p3d, true) {
+                Ok((_, Some(jac))) => {
+                    jacobian.view_mut((counter * 2, 0), (2, 6)).copy_from(&jac);
+                    counter += 1;
+                }
+                Ok((_, None)) => {
+                    // This case can happen if Jacobian computation is not possible for a point
+                    // even if requested. Log a warning and skip this point's Jacobian.
+                    warn!("Jacobian not computed for point {} even when requested.", i);
+                }
+                Err(err_msg) => {
+                    warn!("Projection failed for point {}: {}", i, err_msg);
+                }
             }
+
+            // Get Jacobian for this point (2x6 matrix)
+            // let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
+
+            // if let Some(jac) = jacobian_point_2x6 {
+            //     // Copy the 2x6 Jacobian for this point into the overall Jacobian matrix
+            //     jacobian.view_mut((counter * 2, 0), (2, 6)).copy_from(&jac);
+            //     counter += 1;
+            // }
         }
         jacobian = jacobian.rows(0, counter * 2).into_owned();
         info!("Size residuals: {}", jacobian.nrows());
