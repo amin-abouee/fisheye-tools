@@ -1,4 +1,4 @@
-use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -200,31 +200,8 @@ impl CameraModel for PinholeModel {
         vec![]
     }
 
-    fn linear_estimation(
-        intrinsics: &Intrinsics,
-        resolution: &Resolution,
-        _points_2d: &nalgebra::Matrix2xX<f64>,
-        _points_3d: &nalgebra::Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError> {
-        let model = PinholeModel {
-            intrinsics: intrinsics.clone(),
-            resolution: resolution.clone(),
-        };
-
-        // Validate parameters
-        model.validate_params()?;
-
-        Ok(model)
-    }
-
-    fn optimize(
-        &mut self,
-        _points_3d: &Matrix3xX<f64>,
-        _points_2d: &Matrix2xX<f64>,
-        _verbose: bool,
-    ) -> Result<(), CameraModelError> {
-        Ok(())
-    }
+    // linear_estimation removed from impl CameraModel for PinholeModel
+    // optimize removed from impl CameraModel for PinholeModel
 }
 
 #[cfg(test)]

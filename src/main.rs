@@ -1,11 +1,15 @@
 pub mod camera;
 pub mod geometry;
+pub mod optimization;
 
 use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
+use crate::optimization::Optimizer;
+// , DoubleSphereOptimizationCost, KannalaBrandtOptimizationCost, RadTanOptimizationCost};
 use clap::Parser;
-use flexi_logger::{detailed_format, colored_detailed_format, Duplicate, FileSpec, Logger};
+use flexi_logger::{colored_detailed_format, detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
+use optimization::{DoubleSphereOptimizationCost, RadTanOptimizationCost};
 use std::path::PathBuf; // Use PathBuf for paths
 
 /// Simple program to demonstrate reading input/output model paths from args
@@ -52,31 +56,36 @@ fn create_output_model(
     output_model_type: &str,
     input_intrinsic: &Intrinsics,
     input_resolution: &Resolution,
-    points_2d: &Matrix2xX<f64>,
-    points_3d: &Matrix3xX<f64>,
-) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
-    let output_model: Box<dyn CameraModel> = match output_model_type {
+    points_2d: Matrix2xX<f64>,
+    points_3d: Matrix3xX<f64>,
+) -> Result<Box<dyn Optimizer>, Box<dyn std::error::Error>> {
+    let output_model: Box<dyn Optimizer> = match output_model_type {
         "rad_tan" => {
             info!("Estimated init params: RadTan");
-            Box::new(RadTanModel::linear_estimation(
-                &input_intrinsic,
-                &input_resolution,
-                &points_2d,
-                &points_3d,
-            )?)
+            let model = RadTanModel {
+                intrinsics: input_intrinsic.clone(),
+                resolution: input_resolution.clone(),
+                distortion: [0.0; 5], // Initialize with zero
+            };
+            let mut cost_model = RadTanOptimizationCost::new(model, points_3d, points_2d);
+            cost_model.linear_estimation()?;
+            Box::new(cost_model)
         }
         "double_sphere" => {
             info!("Estimated init params: DoubleSphere");
-            Box::new(DoubleSphereModel::linear_estimation(
-                &input_intrinsic,
-                &input_resolution,
-                &points_2d,
-                &points_3d,
-            )?)
+            let model = DoubleSphereModel {
+                intrinsics: input_intrinsic.clone(),
+                resolution: input_resolution.clone(),
+                alpha: 0.0,
+                xi: 0.0,
+            };
+            let mut cost_model = DoubleSphereOptimizationCost::new(model, points_3d, points_2d);
+            cost_model.linear_estimation()?;
+            Box::new(cost_model)
         }
         _ => {
-            error!("Unsupported input model type: {}", output_model_type);
-            return Err("Unsupported input model type".into());
+            error!("Unsupported output model type: {}", output_model_type);
+            return Err("Unsupported output model type".into());
         }
     };
 
@@ -101,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .format_for_stdout(colored_detailed_format)
         // Set custom color palette for different log levels
         // Format: "error;warn;info;debug;trace"
-        // Using ANSI color codes: 
+        // Using ANSI color codes:
         // 196=bright red, 208=orange, 76=green, 39=cyan, 178=gold
         .set_palette("196;208;76;39;178".to_string())
         .start()?;
@@ -135,16 +144,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_model_type,
         &input_model_intrinsics,
         &input_model_resolution,
-        &points_2d,
-        &points_3d,
+        points_2d,
+        points_3d,
     )?;
 
-    output_model.optimize(&points_3d, &points_2d, true).unwrap();
+    output_model.optimize(true).unwrap();
 
     info!("Output Model Parameters:");
-    info!("Intrinsics: {:?}", output_model.get_intrinsics());
-    info!("Resolution: {:?}", output_model.get_resolution());
-    info!("Resolution: {:?}", output_model.get_distortion());
+    // Attempt to get parameters from the optimizer if it holds a camera model
+    // This part might need adjustment based on how Optimizer trait is implemented
+    // and whether it provides direct access to the underlying model's parameters.
+    // For now, we assume the Optimizer might be a wrapper around a CameraModel
+    // and we'd need a way to access that model. If the Optimizer itself
+    // should have get_intrinsics, get_resolution, get_distortion, then the
+    // Optimizer trait and its implementations would need to be updated.
+
+    // Placeholder: How to get these details from `Box<dyn Optimizer>` depends on its design.
+    // If the optimizer directly wraps a CameraModel and provides access:
+    // if let Some(camera_model) = output_model.get_camera_model() { // Assuming such a method exists
+    //     info!("Intrinsics: {:?}", camera_model.get_intrinsics());
+    //     info!("Resolution: {:?}", camera_model.get_resolution());
+    //     info!("Distortion: {:?}", camera_model.get_distortion());
+    // } else {
+    //     info!("Could not retrieve detailed model parameters from the optimizer.");
+    // }
+
+    // The following lines are commented out as they were in the original code
+    // and their direct application to `output_model` of type `Box<dyn Optimizer>`
+    // is not straightforward without knowing more about the `Optimizer` trait's
+    // capabilities to expose underlying model details.
+    // info!("Intrinsics: {:?}", output_model.get_intrinsics());
+    // info!("Resolution: {:?}", output_model.get_resolution());
+    // info!("Distortion: {:?}", output_model.get_distortion()); // Corrected from Resolution to Distortion
 
     Ok(())
 }

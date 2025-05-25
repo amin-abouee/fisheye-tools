@@ -1,11 +1,11 @@
-use nalgebra::{DMatrix, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
 // Camera model modules
-mod double_sphere;
-mod kannala_brandt;
-mod pinhole;
-mod rad_tan;
+pub mod double_sphere;
+pub mod kannala_brandt;
+pub mod pinhole;
+pub mod rad_tan;
 
 // Re-export camera models
 pub use double_sphere::DoubleSphereModel;
@@ -73,16 +73,6 @@ pub trait CameraModel {
     /// Unproject 2D image coordinates to a 3D ray
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError>;
 
-    /// Linear estimation of the camera model with intrinsics and 2D-3D correspondences
-    fn linear_estimation(
-        intrinsics: &Intrinsics,
-        resolution: &Resolution,
-        points_2d: &Matrix2xX<f64>,
-        points_3d: &Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError>
-    where
-        Self: Sized;
-
     /// Load camera parameters from a YAML file
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError>
     where
@@ -101,13 +91,6 @@ pub trait CameraModel {
 
     /// Get the distortion parameters of the camera
     fn get_distortion(&self) -> Vec<f64>;
-
-    fn optimize(
-        &mut self,
-        points_3d: &Matrix3xX<f64>,
-        points_2d: &Matrix2xX<f64>,
-        verbose: bool,
-    ) -> Result<(), CameraModelError>;
 }
 
 /// Common validation functions for camera parameters

@@ -1,20 +1,9 @@
-use log::info;
-use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{f64::consts::PI, fs, io::Write};
 use yaml_rust::YamlLoader;
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
-
-use argmin::{
-    core::{
-        observers::ObserverMode, CostFunction, Error as ArgminError, Executor, Gradient, Hessian,
-        Jacobian, Operator, State,
-    },
-    solver::gaussnewton::GaussNewton,
-};
-use argmin_observer_slog::SlogLogger;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KannalaBrandtModel {
     pub intrinsics: Intrinsics,
@@ -22,116 +11,11 @@ pub struct KannalaBrandtModel {
     pub distortions: [f64; 4], // k1, k2, k3, k4
 }
 
-// Cost function for optimization
-#[derive(Clone)]
-struct KannalaBrandtOptimizationCost {
-    points3d: Matrix3xX<f64>,
-    points2d: Matrix2xX<f64>,
-}
-
-impl KannalaBrandtOptimizationCost {
-    pub fn new(points3d: Matrix3xX<f64>, points2d: Matrix2xX<f64>) -> Self {
-        assert_eq!(points3d.ncols(), points2d.ncols());
-        KannalaBrandtOptimizationCost { points3d, points2d }
-    }
-}
-
-impl Operator for KannalaBrandtOptimizationCost {
-    type Param = DVector<f64>; // [fx, fy, cx, cy, k1, k2, k3, k4]
-    type Output = DVector<f64>; // Residuals vector
-
-    fn apply(&self, p: &Self::Param) -> Result<Self::Output, ArgminError> {
-        let num_points = self.points3d.ncols();
-        let mut residuals = DVector::zeros(num_points * 2);
-        let model = KannalaBrandtModel::new(&p)?;
-        let mut counter = 0;
-
-        for i in 0..num_points {
-            let p3d = &self.points3d.column(i).into_owned();
-            let p2d_gt = &self.points2d.column(i).into_owned();
-
-            match model.project(p3d, false) {
-                Ok((p2d_projected, _)) => {
-                    residuals[counter * 2] = p2d_projected.x - p2d_gt.x;
-                    residuals[counter * 2 + 1] = p2d_projected.y - p2d_gt.y;
-                    counter += 1;
-                }
-                Err(_) => {
-                    info!("3d points {} are not projected", p3d);
-                }
-            }
-        }
-        residuals = residuals.rows(0, counter * 2).into_owned();
-        Ok(residuals)
-    }
-}
-
-impl Jacobian for KannalaBrandtOptimizationCost {
-    type Param = DVector<f64>;
-    type Jacobian = DMatrix<f64>;
-
-    fn jacobian(&self, p: &Self::Param) -> Result<Self::Jacobian, ArgminError> {
-        let num_points = self.points3d.ncols();
-        let mut jacobian_matrix = DMatrix::zeros(num_points * 2, 8); // 2 residuals per point, 8 parameters
-        let model = KannalaBrandtModel::new(&p)?;
-        let mut counter = 0;
-
-        for i in 0..num_points {
-            let p3d = &self.points3d.column(i).into_owned();
-            match model.project(p3d, true) {
-                Ok((_, Some(jac_point))) => {
-                    jacobian_matrix
-                        .view_mut((counter * 2, 0), (2, 8))
-                        .copy_from(&jac_point);
-                    counter += 1;
-                }
-                Ok((_, None)) => {
-                    info!("3d points {} doesn't have jacobian", p3d);
-                }
-                Err(_) => {
-                    info!("3d points {} are not projected", p3d);
-                }
-            }
-        }
-        jacobian_matrix = jacobian_matrix.rows(0, counter * 2).into_owned();
-        Ok(jacobian_matrix)
-    }
-}
-
-impl CostFunction for KannalaBrandtOptimizationCost {
-    type Param = DVector<f64>;
-    type Output = f64;
-
-    fn cost(&self, p: &Self::Param) -> Result<Self::Output, ArgminError> {
-        let residuals = self.apply(p)?;
-        Ok(residuals.norm_squared() / 2.0) // Standard least squares cost
-    }
-}
-
-impl Gradient for KannalaBrandtOptimizationCost {
-    type Param = DVector<f64>;
-    type Gradient = DVector<f64>;
-
-    fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, ArgminError> {
-        let jacobian = self.jacobian(p)?;
-        let residuals = self.apply(p)?;
-        Ok(jacobian.transpose() * residuals)
-    }
-}
-
-impl Hessian for KannalaBrandtOptimizationCost {
-    type Param = DVector<f64>;
-    type Hessian = DMatrix<f64>;
-
-    fn hessian(&self, p: &Self::Param) -> Result<Self::Hessian, ArgminError> {
-        let jacobian = self.jacobian(p)?;
-        Ok(jacobian.transpose() * jacobian) // Gauss-Newton approximation J^T * J
-    }
-}
+// Removed KannalaBrandtOptimizationCost struct and its trait implementations
 
 impl KannalaBrandtModel {
     // Constructor used by optimization cost function
-    fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
+    pub fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
         if parameters.len() != 8 {
             return Err(CameraModelError::InvalidParams(format!(
                 "Expected 8 parameters, got {}",
@@ -554,238 +438,14 @@ impl CameraModel for KannalaBrandtModel {
         self.distortions.to_vec()
     }
 
-    fn linear_estimation(
-        intrinsics: &Intrinsics,
-        resolution: &Resolution, // resolution is not used in the C++ snippet for estimation
-        points_2d: &Matrix2xX<f64>,
-        points_3d: &Matrix3xX<f64>,
-    ) -> Result<Self, CameraModelError> {
-        if points_3d.ncols() != points_2d.ncols() {
-            return Err(CameraModelError::InvalidParams(
-                "Number of 2D and 3D points must match".to_string(),
-            ));
-        }
-        if points_3d.ncols() < 4 {
-            // Need at least 4 points for 4 distortion coeffs
-            return Err(CameraModelError::InvalidParams(
-                "Not enough points for linear estimation (need at least 4)".to_string(),
-            ));
-        }
-
-        let num_points = points_3d.ncols();
-        let mut a_mat = DMatrix::zeros(num_points * 2, 4);
-        let mut b_vec = DVector::zeros(num_points * 2);
-
-        for i in 0..num_points {
-            let p3d = points_3d.column(i);
-            let p2d = points_2d.column(i);
-
-            let x_world = p3d.x;
-            let y_world = p3d.y;
-            let z_world = p3d.z;
-
-            let u_img = p2d.x;
-            let v_img = p2d.y;
-
-            if z_world <= f64::EPSILON {
-                // Avoid division by zero or points behind camera
-                continue; // Skip this point
-            }
-
-            let r_world = (x_world * x_world + y_world * y_world).sqrt();
-            let theta = r_world.atan2(z_world);
-
-            let theta2 = theta * theta;
-            let theta3 = theta2 * theta;
-            let theta5 = theta3 * theta2;
-            let theta7 = theta5 * theta2;
-            let theta9 = theta7 * theta2;
-
-            // Check for X or Y being zero for the b_vec calculation terms
-            // (r / (fx * X)) and (r / (fy * Y))
-            // If X is zero, r = |Y|. If Y is zero, r = |X|. If both are zero, r = 0.
-            // If r is zero, theta is zero.
-            // The C++ code doesn't show handling for X=0 or Y=0 in these specific terms.
-            // This can lead to division by zero.
-            // A robust solution would require careful handling or a different formulation if X or Y can be zero.
-            // For now, proceeding with direct translation, but this is a known fragile point.
-            // If x_world or y_world is near zero, the corresponding b term might be unstable.
-
-            if x_world.abs() < f64::EPSILON
-                || y_world.abs() < f64::EPSILON
-                || r_world < f64::EPSILON
-            {
-                // Skipping points on or very near the Z-axis for these b-terms,
-                // or where X or Y is zero, as the formula is unstable.
-                // This might discard too many points for some datasets.
-                // A more advanced linear estimation might be needed.
-                // For now, let's fill with a placeholder or skip.
-                // For simplicity in direct translation, if we hit this, the SVD might fail or give poor results.
-                // Let's assume for now points are "general" enough.
-            }
-
-            a_mat[(i * 2, 0)] = theta3;
-            a_mat[(i * 2, 1)] = theta5;
-            a_mat[(i * 2, 2)] = theta7;
-            a_mat[(i * 2, 3)] = theta9;
-
-            a_mat[(i * 2 + 1, 0)] = theta3;
-            a_mat[(i * 2 + 1, 1)] = theta5;
-            a_mat[(i * 2 + 1, 2)] = theta7;
-            a_mat[(i * 2 + 1, 3)] = theta9;
-
-            // b[i * 2] = (u - common_params_.cx) * (r / (common_params_.fx * X)) - theta;
-            // b[i * 2 + 1] = (v - common_params_.cy) * (r / (common_params_.fy * Y)) - theta;
-            // These terms are problematic if X or Y are zero.
-            // Let's use the definition of x_r = X/r and y_r = Y/r from projection.
-            // proj_x = fx * theta_d * x_r + cx  => (proj_x - cx) / (fx * x_r) = theta_d
-            // theta_d = theta + k1*theta3 + ...
-            // So, (proj_x - cx) / (fx * x_r) - theta = k1*theta3 + ...
-            // This seems more robust.
-
-            let x_r = if r_world < f64::EPSILON {
-                0.0
-            } else {
-                x_world / r_world
-            };
-            let y_r = if r_world < f64::EPSILON {
-                0.0
-            } else {
-                y_world / r_world
-            };
-
-            if (intrinsics.fx * x_r).abs() < f64::EPSILON && x_r.abs() > f64::EPSILON {
-                // Avoid div by zero if fx is zero, but x_r is not
-                return Err(CameraModelError::NumericalError(
-                    "fx * x_r is zero in linear estimation".to_string(),
-                ));
-            }
-            if (intrinsics.fy * y_r).abs() < f64::EPSILON && y_r.abs() > f64::EPSILON {
-                return Err(CameraModelError::NumericalError(
-                    "fy * y_r is zero in linear estimation".to_string(),
-                ));
-            }
-
-            if x_r.abs() > f64::EPSILON {
-                // Only compute if x_r is not zero
-                b_vec[i * 2] = (u_img - intrinsics.cx) / (intrinsics.fx * x_r) - theta;
-            } else {
-                // if x_r is zero, this row of A is all theta powers, b should be -theta if u_img=cx
-                b_vec[i * 2] = if (u_img - intrinsics.cx).abs() < f64::EPSILON {
-                    -theta
-                } else {
-                    0.0
-                }; // Or handle as unusable point
-            }
-
-            if y_r.abs() > f64::EPSILON {
-                // Only compute if y_r is not zero
-                b_vec[i * 2 + 1] = (v_img - intrinsics.cy) / (intrinsics.fy * y_r) - theta;
-            } else {
-                b_vec[i * 2 + 1] = if (v_img - intrinsics.cy).abs() < f64::EPSILON {
-                    -theta
-                } else {
-                    0.0
-                };
-            }
-        }
-
-        let svd = a_mat.svd(true, true);
-        let x_coeffs = svd.solve(&b_vec, f64::EPSILON).map_err(|e_str| {
-            CameraModelError::NumericalError(format!(
-                "SVD solve failed in linear estimation: {}",
-                e_str
-            ))
-        })?;
-
-        let model = KannalaBrandtModel {
-            intrinsics: intrinsics.clone(),
-            resolution: resolution.clone(),
-            distortions: [x_coeffs[0], x_coeffs[1], x_coeffs[2], x_coeffs[3]],
-        };
-
-        model.validate_params()?;
-        Ok(model)
-    }
-
-    fn optimize(
-        &mut self,
-        points_3d: &Matrix3xX<f64>,
-        points_2d: &Matrix2xX<f64>,
-        verbose: bool,
-    ) -> Result<(), CameraModelError> {
-        if points_3d.ncols() != points_2d.ncols() {
-            return Err(CameraModelError::InvalidParams(
-                "Number of 2D and 3D points must match".to_string(),
-            ));
-        }
-        if points_3d.ncols() == 0 {
-            return Err(CameraModelError::InvalidParams(
-                "Points arrays cannot be empty".to_string(),
-            ));
-        }
-
-        let cost_function =
-            KannalaBrandtOptimizationCost::new(points_3d.clone(), points_2d.clone());
-
-        let initial_params_vec = vec![
-            self.intrinsics.fx,
-            self.intrinsics.fy,
-            self.intrinsics.cx,
-            self.intrinsics.cy,
-            self.distortions[0],
-            self.distortions[1],
-            self.distortions[2],
-            self.distortions[3],
-        ];
-        let init_param: DVector<f64> = DVector::from_vec(initial_params_vec);
-
-        let solver = GaussNewton::new();
-
-        let mut executor_builder = Executor::new(cost_function, solver)
-            .configure(|state| state.param(init_param).max_iters(100));
-
-        if verbose {
-            executor_builder =
-                executor_builder.add_observer(SlogLogger::term(), ObserverMode::Always);
-            info!("Starting Kannala-Brandt optimization with Gauss-Newton...");
-        } else {
-            executor_builder =
-                executor_builder.add_observer(SlogLogger::term(), ObserverMode::NewBest);
-        }
-
-        let res = executor_builder
-            .run()
-            .map_err(|e| CameraModelError::NumericalError(e.to_string()))?;
-
-        if verbose {
-            info!("Optimization finished: \n{}", res);
-            info!("Termination status: {:?}", res.state().termination_status);
-        }
-
-        if let Some(best_params_dvec) = res.state().get_best_param() {
-            self.intrinsics.fx = best_params_dvec[0];
-            self.intrinsics.fy = best_params_dvec[1];
-            self.intrinsics.cx = best_params_dvec[2];
-            self.intrinsics.cy = best_params_dvec[3];
-            self.distortions[0] = best_params_dvec[4];
-            self.distortions[1] = best_params_dvec[5];
-            self.distortions[2] = best_params_dvec[6];
-            self.distortions[3] = best_params_dvec[7];
-            self.validate_params()?; // Validate the new parameters
-        } else {
-            return Err(CameraModelError::NumericalError(
-                "Optimization failed to find best parameters".to_string(),
-            ));
-        }
-        Ok(())
-    }
+    // linear_estimation removed from impl CameraModel for KannalaBrandtModel
+    // optimize removed from impl CameraModel for KannalaBrandtModel
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*; // Imports items from the parent module (KannalaBrandtModel, CameraModel trait, etc.)
-    use approx::assert_relative_eq; // For floating point comparisons
+    use super::*;
+    use approx::assert_relative_eq;
 
     // Helper function to get a sample KannalaBrandtModel instance
     // This could load from YAML or use the new() function with sample parameters
@@ -963,102 +623,100 @@ mod tests {
     // of these methods and potentially argmin cost functions.
     // Below are sketches of what these tests might look like.
 
-    fn generate_synthetic_data(
-        model: &KannalaBrandtModel,
-        num_points: usize,
-    ) -> (Matrix3xX<f64>, Matrix2xX<f64>) {
-        let mut points_3d_vec = Vec::new();
-        let mut points_2d_vec = Vec::new();
+    // fn generate_synthetic_data(
+    //     model: &KannalaBrandtModel,
+    //     num_points: usize,
+    // ) -> (Matrix3xX<f64>, Matrix2xX<f64>) {
+    //     let mut points_3d_vec = Vec::new();
+    //     let mut points_2d_vec = Vec::new();
 
-        // Generate some 3D points in a reasonable FOV
-        for i in 0..num_points {
-            let x = (i as f64 * 0.1) - (num_points as f64 * 0.05); // Spread points
-            let y = (i as f64 * 0.05) - (num_points as f64 * 0.025);
-            let z = 1.0 + (i as f64 * 0.01); // Vary depth
-            let p3d = Vector3::new(x, y, z);
+    //     // Generate some 3D points in a reasonable FOV
+    //     for i in 0..num_points {
+    //         let x = (i as f64 * 0.1) - (num_points as f64 * 0.05); // Spread points
+    //         let y = (i as f64 * 0.05) - (num_points as f64 * 0.025);
+    //         let z = 1.0 + (i as f64 * 0.01); // Vary depth
+    //         let p3d = Vector3::new(x, y, z);
 
-            if let Ok((p2d, _)) = model.project(&p3d, false) {
-                // Ensure point is within image (simplified check)
-                if p2d.x > 0.0
-                    && p2d.x < model.resolution.width as f64
-                    && p2d.y > 0.0
-                    && p2d.y < model.resolution.height as f64
-                {
-                    points_3d_vec.push(p3d);
-                    points_2d_vec.push(p2d);
-                }
-            }
-        }
+    //         if let Ok((p2d, _)) = model.project(&p3d, false) {
+    //             // Ensure point is within image (simplified check)
+    //             if p2d.x > 0.0
+    //                 && p2d.x < model.resolution.width as f64
+    //                 && p2d.y > 0.0
+    //                 && p2d.y < model.resolution.height as f64
+    //             {
+    //                 points_3d_vec.push(p3d);
+    //                 points_2d_vec.push(p2d);
+    //             }
+    //         }
+    //     }
 
-        let points_3d = Matrix3xX::from_columns(&points_3d_vec);
-        let points_2d = Matrix2xX::from_columns(&points_2d_vec);
-        (points_3d, points_2d)
-    }
+    //     let points_3d = Matrix3xX::from_columns(&points_3d_vec);
+    //     let points_2d = Matrix2xX::from_columns(&points_2d_vec);
+    //     (points_3d, points_2d)
+    // }
 
-    #[test]
-    fn test_linear_estimation() {
-        let ground_truth_model = get_sample_kb_model();
-        let (points_3d, points_2d) = generate_synthetic_data(&ground_truth_model, 20);
+    // #[test]
+    // fn test_linear_estimation() {
+    //     let ground_truth_model = get_sample_kb_model();
+    //     let (points_3d, points_2d) = generate_synthetic_data(&ground_truth_model, 20);
 
-        // Assume intrinsics (fx, fy, cx, cy) are known for linear estimation of distortion
-        let estimated_model_result = KannalaBrandtModel::linear_estimation(
-            &ground_truth_model.intrinsics,
-            &ground_truth_model.resolution,
-            &points_2d,
-            &points_3d,
-        );
+    //     // Assume intrinsics (fx, fy, cx, cy) are known for linear estimation of distortion
+    //     let estimated_model_result = KannalaBrandtModel::linear_estimation(
+    //         &ground_truth_model.intrinsics,
+    //         &ground_truth_model.resolution,
+    //         &points_2d,
+    //         &points_3d,
+    //     );
 
-        assert!(
-            estimated_model_result.is_ok(),
-            "Linear estimation failed: {:?}",
-            estimated_model_result.err()
-        );
-        let estimated_model = estimated_model_result.unwrap();
+    //     assert!(
+    //         estimated_model_result.is_ok(),
+    //         "Linear estimation failed: {:?}",
+    //         estimated_model_result.err()
+    //     );
+    //     let estimated_model = estimated_model_result.unwrap();
 
-        // Compare estimated distortion with ground truth
-        // Linear estimation might not be perfectly accurate, so use a larger epsilon
-        for i in 0..4 {
-            assert_relative_eq!(
-                estimated_model.distortions[i],
-                ground_truth_model.distortions[i],
-                epsilon = 1e-1
-            );
-        }
-    }
+    //     // Compare estimated distortion with ground truth
+    //     // Linear estimation might not be perfectly accurate, so use a larger epsilon
+    //     for i in 0..4 {
+    //         assert_relative_eq!(
+    //             estimated_model.distortions[i],
+    //             ground_truth_model.distortions[i],
+    //             epsilon = 1e-1
+    //         );
+    //     }
+    // }
 
     // For optimize test, you would need:
     // 1. KannalaBrandtOptimizationCost struct (similar to DoubleSphereOptimizationCost)
     //    - Implementing argmin traits: Operator, Jacobian, CostFunction, Gradient, Hessian
     // 2. The optimize method in KannalaBrandtModel using argmin (e.g., GaussNewton solver)
 
-    /*
-    #[test]
-    fn test_optimize() {
-        let ground_truth_model = get_sample_kb_model();
-        let (points_3d, points_2d) = generate_synthetic_data(&ground_truth_model, 50);
+    // #[test]
+    // fn test_optimize_trait_method() { // Renamed to avoid conflict if original test_optimize is kept
+    //     let ground_truth_model = get_sample_kb_model();
+    //     let (points_3d, points_2d) = generate_synthetic_data(&ground_truth_model, 50);
 
-        // Create an initial model with slightly perturbed parameters
-        let mut initial_model = ground_truth_model.clone();
-        initial_model.intrinsics.fx *= 1.05;
-        initial_model.intrinsics.cy *= 0.95;
-        initial_model.distortions[0] *= 1.2;
-        initial_model.distortions[2] *= 0.8;
+    //     // Create an initial model with slightly perturbed parameters
+    //     let mut initial_model = ground_truth_model.clone();
+    //     initial_model.intrinsics.fx *= 1.05;
+    //     initial_model.intrinsics.cy *= 0.95;
+    //     initial_model.distortions[0] *= 1.2;
+    //     initial_model.distortions[2] *= 0.8;
 
+    //     // Use the Optimizer trait's optimize method
+    //     let optimize_result = Optimizer::optimize(&mut initial_model, &points_3d, &points_2d, false);
+    //     assert!(optimize_result.is_ok(), "Optimization failed: {:?}", optimize_result.err());
 
-        let optimize_result = initial_model.optimize(&points_3d, &points_2d, false); // verbose = false
-        assert!(optimize_result.is_ok(), "Optimization failed: {:?}", optimize_result.err());
+    //     let optimized_model = initial_model; // optimize should modify in place
 
-        let optimized_model = initial_model; // optimize should modify in place
+    //     // Compare optimized parameters with ground truth
+    //     assert_relative_eq!(optimized_model.intrinsics.fx, ground_truth_model.intrinsics.fx, epsilon = 1e-3);
+    //     assert_relative_eq!(optimized_model.intrinsics.fy, ground_truth_model.intrinsics.fy, epsilon = 1e-3);
+    //     assert_relative_eq!(optimized_model.intrinsics.cx, ground_truth_model.intrinsics.cx, epsilon = 1e-3);
+    //     assert_relative_eq!(optimized_model.intrinsics.cy, ground_truth_model.intrinsics.cy, epsilon = 1e-3);
 
-        // Compare optimized parameters with ground truth
-        assert_relative_eq!(optimized_model.intrinsics.fx, ground_truth_model.intrinsics.fx, epsilon = 1e-3);
-        assert_relative_eq!(optimized_model.intrinsics.fy, ground_truth_model.intrinsics.fy, epsilon = 1e-3);
-        assert_relative_eq!(optimized_model.intrinsics.cx, ground_truth_model.intrinsics.cx, epsilon = 1e-3);
-        assert_relative_eq!(optimized_model.intrinsics.cy, ground_truth_model.intrinsics.cy, epsilon = 1e-3);
-
-        for i in 0..4 {
-            assert_relative_eq!(optimized_model.distortions[i], ground_truth_model.distortions[i], epsilon = 1e-3);
-        }
-    }
-    */
+    //     for i in 0..4 {
+    //         assert_relative_eq!(optimized_model.distortions[i], ground_truth_model.distortions[i], epsilon = 1e-3);
+    //     }
+    // }
 }
