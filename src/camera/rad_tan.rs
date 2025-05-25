@@ -1,7 +1,6 @@
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
-use nalgebra::{DMatrix, DVector, Matrix2, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Matrix2, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
-use log::info; // Added
 use std::fs;
 use std::io::Write;
 use yaml_rust::YamlLoader;

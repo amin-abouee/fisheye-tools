@@ -1,4 +1,4 @@
-use nalgebra::{DMatrix, DVector, Vector2, Vector3, Matrix3xX, Matrix2xX};
+use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{f64::consts::PI, fs, io::Write};
 use yaml_rust::YamlLoader;
@@ -445,8 +445,7 @@ impl CameraModel for KannalaBrandtModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq; 
-
+    use approx::assert_relative_eq;
 
     // Helper function to get a sample KannalaBrandtModel instance
     // This could load from YAML or use the new() function with sample parameters
@@ -624,37 +623,37 @@ mod tests {
     // of these methods and potentially argmin cost functions.
     // Below are sketches of what these tests might look like.
 
-    fn generate_synthetic_data(
-        model: &KannalaBrandtModel,
-        num_points: usize,
-    ) -> (Matrix3xX<f64>, Matrix2xX<f64>) {
-        let mut points_3d_vec = Vec::new();
-        let mut points_2d_vec = Vec::new();
+    // fn generate_synthetic_data(
+    //     model: &KannalaBrandtModel,
+    //     num_points: usize,
+    // ) -> (Matrix3xX<f64>, Matrix2xX<f64>) {
+    //     let mut points_3d_vec = Vec::new();
+    //     let mut points_2d_vec = Vec::new();
 
-        // Generate some 3D points in a reasonable FOV
-        for i in 0..num_points {
-            let x = (i as f64 * 0.1) - (num_points as f64 * 0.05); // Spread points
-            let y = (i as f64 * 0.05) - (num_points as f64 * 0.025);
-            let z = 1.0 + (i as f64 * 0.01); // Vary depth
-            let p3d = Vector3::new(x, y, z);
+    //     // Generate some 3D points in a reasonable FOV
+    //     for i in 0..num_points {
+    //         let x = (i as f64 * 0.1) - (num_points as f64 * 0.05); // Spread points
+    //         let y = (i as f64 * 0.05) - (num_points as f64 * 0.025);
+    //         let z = 1.0 + (i as f64 * 0.01); // Vary depth
+    //         let p3d = Vector3::new(x, y, z);
 
-            if let Ok((p2d, _)) = model.project(&p3d, false) {
-                // Ensure point is within image (simplified check)
-                if p2d.x > 0.0
-                    && p2d.x < model.resolution.width as f64
-                    && p2d.y > 0.0
-                    && p2d.y < model.resolution.height as f64
-                {
-                    points_3d_vec.push(p3d);
-                    points_2d_vec.push(p2d);
-                }
-            }
-        }
+    //         if let Ok((p2d, _)) = model.project(&p3d, false) {
+    //             // Ensure point is within image (simplified check)
+    //             if p2d.x > 0.0
+    //                 && p2d.x < model.resolution.width as f64
+    //                 && p2d.y > 0.0
+    //                 && p2d.y < model.resolution.height as f64
+    //             {
+    //                 points_3d_vec.push(p3d);
+    //                 points_2d_vec.push(p2d);
+    //             }
+    //         }
+    //     }
 
-        let points_3d = Matrix3xX::from_columns(&points_3d_vec);
-        let points_2d = Matrix2xX::from_columns(&points_2d_vec);
-        (points_3d, points_2d)
-    }
+    //     let points_3d = Matrix3xX::from_columns(&points_3d_vec);
+    //     let points_2d = Matrix2xX::from_columns(&points_2d_vec);
+    //     (points_3d, points_2d)
+    // }
 
     // #[test]
     // fn test_linear_estimation() {
@@ -692,7 +691,6 @@ mod tests {
     //    - Implementing argmin traits: Operator, Jacobian, CostFunction, Gradient, Hessian
     // 2. The optimize method in KannalaBrandtModel using argmin (e.g., GaussNewton solver)
 
-    
     // #[test]
     // fn test_optimize_trait_method() { // Renamed to avoid conflict if original test_optimize is kept
     //     let ground_truth_model = get_sample_kb_model();
@@ -721,5 +719,4 @@ mod tests {
     //         assert_relative_eq!(optimized_model.distortions[i], ground_truth_model.distortions[i], epsilon = 1e-3);
     //     }
     // }
-    
 }

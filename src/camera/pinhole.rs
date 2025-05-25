@@ -1,4 +1,4 @@
-use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;

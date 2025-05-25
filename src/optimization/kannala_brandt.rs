@@ -379,109 +379,121 @@ mod tests {
         )
     }
 
-    // #[test]
-    // fn test_kannala_brandt_optimization_cost_basic() {
-    //     let model_camera = get_sample_kb_camera_model();
-    //     let (points_2d, points_3d) = sample_points_for_kb_model(&model_camera, 5);
+    #[test]
+    fn test_kannala_brandt_optimization_cost_basic() {
+        let model_camera = get_sample_kb_camera_model();
+        let (points_2d, points_3d) = sample_points_for_kb_model(&model_camera, 5);
 
-    //     assert!(points_3d.ncols() > 0, "Need at least one valid point for testing cost function.");
+        assert!(points_3d.ncols() > 0, "Need at least one valid point for testing cost function.");
 
-    //     let cost = KannalaBrandtOptimizationCost::new(points_3d.clone(), points_2d.clone());
-    //     let params_vec = vec![
-    //         model_camera.intrinsics.fx, model_camera.intrinsics.fy,
-    //         model_camera.intrinsics.cx, model_camera.intrinsics.cy,
-    //         model_camera.distortions[0], model_camera.distortions[1],
-    //         model_camera.distortions[2], model_camera.distortions[3],
-    //     ];
-    //     let p = DVector::from_vec(params_vec);
+        let cost = KannalaBrandtOptimizationCost::new(model_camera.clone(), points_3d.clone(), points_2d.clone());
+        let params_vec = vec![
+            model_camera.intrinsics.fx, model_camera.intrinsics.fy,
+            model_camera.intrinsics.cx, model_camera.intrinsics.cy,
+            model_camera.distortions[0], model_camera.distortions[1],
+            model_camera.distortions[2], model_camera.distortions[3],
+        ];
+        let p = DVector::from_vec(params_vec);
 
-    //     // Test apply (residuals)
-    //     let residuals = cost.apply(&p).unwrap();
-    //     assert_eq!(residuals.len(), 2 * points_3d.ncols());
-    //     assert!(residuals.iter().all(|&v| v.abs() < 1e-6));
+        // Test apply (residuals)
+        let residuals = cost.apply(&p).unwrap();
+        assert_eq!(residuals.len(), 2 * points_3d.ncols());
+        // If points_3d.ncols() is 0, residuals.iter() will be empty, and .all() returns true.
+        // Add a check for non-empty residuals if points_3d.ncols() > 0
+        if points_3d.ncols() > 0 {
+            assert!(residuals.iter().all(|&v| v.abs() < 1e-6));
+        }
 
-    //     // Test cost
-    //     let c = cost.cost(&p).unwrap();
-    //     assert!(c >= 0.0 && c < 1e-5);
+        // Test cost
+        let c = cost.cost(&p).unwrap();
+        assert!(c >= 0.0 && c < 1e-5);
 
-    //     // Test jacobian
-    //     let jac = cost.jacobian(&p).unwrap();
-    //     assert_eq!(jac.nrows(), 2 * points_3d.ncols());
-    //     assert_eq!(jac.ncols(), 8); // 8 parameters for KannalaBrandt
+        // Test jacobian
+        let jac = cost.jacobian(&p).unwrap();
+        assert_eq!(jac.nrows(), 2 * points_3d.ncols());
+        assert_eq!(jac.ncols(), 8); // 8 parameters for KannalaBrandt
 
-    //     // Test gradient
-    //     let grad = cost.gradient(&p).unwrap();
-    //     assert_eq!(grad.len(), 8);
-    //     assert!(grad.norm() < 1e-5);
+        // Test gradient
+        let grad = cost.gradient(&p).unwrap();
+        assert_eq!(grad.len(), 8);
+        if points_3d.ncols() > 0 {
+            assert!(grad.norm() < 1e-5);
+        }
 
-    //     // Test hessian
-    //     let hess = cost.hessian(&p).unwrap();
-    //     assert_eq!(hess.nrows(), 8);
-    //     assert_eq!(hess.ncols(), 8);
-    // }
+        // Test hessian
+        let hess = cost.hessian(&p).unwrap();
+        assert_eq!(hess.nrows(), 8);
+        assert_eq!(hess.ncols(), 8);
+    }
 
-    // #[test]
-    // fn test_kannala_brandt_optimize_trait_method() {
-    //     let reference_model = get_sample_kb_camera_model();
-    //     let (points_2d, points_3d) = sample_points_for_kb_model(&reference_model, 50);
-    //     assert!(points_3d.ncols() > 10, "Need sufficient points for optimization test.");
+    #[test]
+    fn test_kannala_brandt_optimize_trait_method() {
+        let reference_model = get_sample_kb_camera_model();
+        let (points_2d, points_3d) = sample_points_for_kb_model(&reference_model, 50);
+        assert!(points_3d.ncols() > 10, "Need sufficient points for optimization test. Actual points: {}", points_3d.ncols());
 
-    //     let mut noisy_model = KBCameraModel {
-    //         intrinsics: Intrinsics {
-    //             fx: reference_model.intrinsics.fx * 1.05, // Introduce noise
-    //             fy: reference_model.intrinsics.fy * 0.95,
-    //             cx: reference_model.intrinsics.cx - 3.0,
-    //             cy: reference_model.intrinsics.cy + 3.0,
-    //         },
-    //         resolution: reference_model.resolution.clone(),
-    //         distortions: [
-    //             reference_model.distortions[0] * 0.8,
-    //             reference_model.distortions[1] * 1.2,
-    //             reference_model.distortions[2] * 0.7,
-    //             reference_model.distortions[3] * 1.3,
-    //         ],
-    //     };
+        let noisy_model_initial = KBCameraModel {
+            intrinsics: Intrinsics {
+                fx: reference_model.intrinsics.fx * 1.05, // Introduce noise
+                fy: reference_model.intrinsics.fy * 0.95,
+                cx: reference_model.intrinsics.cx - 3.0,
+                cy: reference_model.intrinsics.cy + 3.0,
+            },
+            resolution: reference_model.resolution.clone(),
+            distortions: [
+                reference_model.distortions[0] * 0.8,
+                reference_model.distortions[1] * 1.2,
+                reference_model.distortions[2] * 0.7,
+                reference_model.distortions[3] * 1.3,
+            ],
+        };
 
-    //     let optimize_result = Optimizer::optimize(&mut noisy_model, &points_3d, &points_2d, false);
-    //     assert!(optimize_result.is_ok(), "Optimization failed: {:?}", optimize_result.err());
+        let mut cost_optimizer = KannalaBrandtOptimizationCost::new(noisy_model_initial, points_3d.clone(), points_2d.clone());
+        let optimize_result = cost_optimizer.optimize(false);
+        assert!(optimize_result.is_ok(), "Optimization failed: {:?}", optimize_result.err());
 
-    //     // Compare optimized parameters with reference_model
-    //     assert_relative_eq!(noisy_model.intrinsics.fx, reference_model.intrinsics.fx, epsilon = 5.0); // Looser epsilon
-    //     assert_relative_eq!(noisy_model.intrinsics.fy, reference_model.intrinsics.fy, epsilon = 5.0);
-    //     assert_relative_eq!(noisy_model.intrinsics.cx, reference_model.intrinsics.cx, epsilon = 5.0);
-    //     assert_relative_eq!(noisy_model.intrinsics.cy, reference_model.intrinsics.cy, epsilon = 5.0);
-    //     for i in 0..4 {
-    //         assert_relative_eq!(noisy_model.distortions[i], reference_model.distortions[i], epsilon = 0.05); // Looser
-    //     }
-    // }
+        let optimized_model = &cost_optimizer.model;
 
-    // #[test]
-    // fn test_kannala_brandt_linear_estimation_optimizer_trait() {
-    //     let reference_model = get_sample_kb_camera_model();
-    //     // Linear estimation for KB typically estimates distortion from known intrinsics.
-    //     // The sample_points_for_kb_model function generates points based on the reference model.
-    //     let (points_2d, points_3d) = sample_points_for_kb_model(&reference_model, 20);
-    //     assert!(points_3d.ncols() > 3, "Need at least 4 points for KB linear estimation.");
+        // Compare optimized parameters with reference_model
+        assert_relative_eq!(optimized_model.intrinsics.fx, reference_model.intrinsics.fx, epsilon = 5.0, max_relative = 0.05); // Looser epsilon
+        assert_relative_eq!(optimized_model.intrinsics.fy, reference_model.intrinsics.fy, epsilon = 5.0, max_relative = 0.05);
+        assert_relative_eq!(optimized_model.intrinsics.cx, reference_model.intrinsics.cx, epsilon = 5.0, max_relative = 0.05);
+        assert_relative_eq!(optimized_model.intrinsics.cy, reference_model.intrinsics.cy, epsilon = 5.0, max_relative = 0.05);
+        for i in 0..4 {
+            assert_relative_eq!(optimized_model.distortions[i], reference_model.distortions[i], epsilon = 0.05, max_relative = 0.1); // Looser
+        }
+    }
 
-    //     let estimated_model_result = KBCameraModel::linear_estimation(
-    //         &reference_model.intrinsics, // Provide true intrinsics
-    //         &reference_model.resolution,
-    //         &points_2d,
-    //         &points_3d,
-    //     );
+    #[test]
+    fn test_kannala_brandt_linear_estimation_optimizer_trait() {
+        let reference_model = get_sample_kb_camera_model();
+        let (points_2d, points_3d) = sample_points_for_kb_model(&reference_model, 20);
+        assert!(points_3d.ncols() > 3, "Need at least 4 points for KB linear estimation. Actual points: {}", points_3d.ncols());
 
-    //     assert!(estimated_model_result.is_ok(), "Linear estimation failed: {:?}", estimated_model_result.err());
-    //     let estimated_model = estimated_model_result.unwrap();
+        // For linear estimation, we typically assume intrinsics are known or roughly known.
+        // The linear estimation part of the Optimizer trait will update the distortions in its internal model.
+        let mut initial_model_for_estimation = KBCameraModel {
+            intrinsics: reference_model.intrinsics.clone(), // Use reference intrinsics
+            resolution: reference_model.resolution.clone(),
+            distortions: [0.0, 0.0, 0.0, 0.0], // Start with zero distortion for estimation
+        };
 
-    //     // Compare estimated distortion parameters. Linear estimation might not be super accurate.
-    //     for i in 0..4 {
-    //         assert_relative_eq!(estimated_model.distortions[i], reference_model.distortions[i], epsilon = 0.1);
-    //     }
+        let mut cost_estimator = KannalaBrandtOptimizationCost::new(initial_model_for_estimation, points_3d.clone(), points_2d.clone());
+        let estimation_result = cost_estimator.linear_estimation();
 
-    //     // Intrinsics should remain the same
-    //     assert_relative_eq!(estimated_model.intrinsics.fx, reference_model.intrinsics.fx, epsilon = 1e-9);
-    //     assert_relative_eq!(estimated_model.intrinsics.fy, reference_model.intrinsics.fy, epsilon = 1e-9);
-    //     assert_relative_eq!(estimated_model.intrinsics.cx, reference_model.intrinsics.cx, epsilon = 1e-9);
-    //     assert_relative_eq!(estimated_model.intrinsics.cy, reference_model.intrinsics.cy, epsilon = 1e-9);
-    // }
+        assert!(estimation_result.is_ok(), "Linear estimation failed: {:?}", estimation_result.err());
+        let estimated_model = &cost_estimator.model;
+
+        // Compare estimated distortion parameters. Linear estimation might not be super accurate.
+        // The accuracy depends heavily on the quality of points and the model itself.
+        for i in 0..4 {
+            assert_relative_eq!(estimated_model.distortions[i], reference_model.distortions[i], epsilon = 0.1, max_relative = 0.2);
+        }
+
+        // Intrinsics should remain unchanged by this specific linear_estimation implementation
+        assert_relative_eq!(estimated_model.intrinsics.fx, reference_model.intrinsics.fx, epsilon = 1e-9);
+        assert_relative_eq!(estimated_model.intrinsics.fy, reference_model.intrinsics.fy, epsilon = 1e-9);
+        assert_relative_eq!(estimated_model.intrinsics.cx, reference_model.intrinsics.cx, epsilon = 1e-9);
+        assert_relative_eq!(estimated_model.intrinsics.cy, reference_model.intrinsics.cy, epsilon = 1e-9);
+    }
 }

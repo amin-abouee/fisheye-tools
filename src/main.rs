@@ -2,9 +2,7 @@ pub mod camera;
 pub mod geometry;
 pub mod optimization;
 
-use crate::camera::{
-    CameraModel, CameraModelError, DoubleSphereModel, Intrinsics, RadTanModel, Resolution,
-};
+use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
 use crate::optimization::Optimizer;
 // , DoubleSphereOptimizationCost, KannalaBrandtOptimizationCost, RadTanOptimizationCost};
 use clap::Parser;

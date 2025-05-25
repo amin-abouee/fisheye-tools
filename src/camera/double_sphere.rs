@@ -10,11 +10,11 @@
 //! "The Double Sphere Camera Model" by Vladyslav Usenko and Nikolaus Demmel
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
+use log::info;
 use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
-use log::info;
 
 // Removed DoubleSphereOptimizationCost struct and its trait implementations (Operator, Jacobian, CostFunction, Gradient, Hessian)
 
@@ -477,7 +477,6 @@ impl CameraModel for DoubleSphereModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::optimization::Optimizer as _;
     use approx::assert_relative_eq; // For floating point comparisons // Import the trait to use its methods in tests
 
     // Helper to get a default model, similar to the one in samples/double_sphere.yaml
