@@ -435,25 +435,6 @@ mod tests {
         model: &DSCameraModel,
         num_points: usize,
     ) -> (Matrix2xX<f64>, Matrix3xX<f64>) {
-        // let mut points_2d_vec = Vec::new();
-        // let mut points_3d_vec = Vec::new();
-
-        // for i in 0..num_points {
-        //     let x = (i as f64 * 0.1) - (num_points as f64 * 0.05);
-        //     let y = (i as f64 * 0.05) - (num_points as f64 * 0.025);
-        //     let z = 1.0 + (i as f64 * 0.01);
-        //     let p3d = Vector3::new(x, y, z);
-
-        //     if let Ok((p2d, _)) = model.project(&p3d, false) {
-        //         points_3d_vec.push(p3d);
-        //         points_2d_vec.push(p2d);
-        //     }
-        // }
-        // (
-        //     Matrix2xX::from_columns(&points_2d_vec),
-        //     Matrix3xX::from_columns(&points_3d_vec),
-        // )
-        // Use geometry::sample_points to generate a set of 2D-3D point correspondences
         crate::geometry::sample_points(Some(model), num_points).unwrap()
     }
 
