@@ -1,6 +1,6 @@
 [package]
 name = "fisheye-tools"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Amin Abouee"]
 description = "A Rust library for fisheye camera model conversions"
@@ -12,8 +12,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 yaml-rust = "0.4"
 thiserror = "2.0.12"
-kornia = "0.1.8" # Reverted to 0.1.8
-clap = { version = "4.5.4", features = ["derive"] }
+kornia = "0.1.9" # Reverted to 0.1.8
+clap = { version = "4.5.38", features = ["derive"] }
 argmin = { version = "0.10.0" }
 argmin-math = { version = "0.4", features = ["nalgebra_latest"] }
 argmin-observer-slog = "0.1.0"
