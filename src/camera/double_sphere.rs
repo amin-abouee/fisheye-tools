@@ -16,8 +16,6 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
 
-// Removed DoubleSphereOptimizationCost struct and its trait implementations (Operator, Jacobian, CostFunction, Gradient, Hessian)
-
 /// Double Sphere camera model implementation.
 ///
 /// The Double Sphere model is designed for wide-angle and fisheye cameras.

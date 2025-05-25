@@ -1,6 +1,3 @@
-// src/optimization/double_sphere.rs
-
-// use crate::camera::double_sphere::DoubleSphereModel; // Adjusted path
 use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
 use crate::optimization::Optimizer;
 use argmin::{
@@ -10,7 +7,6 @@ use argmin::{
     },
     solver::gaussnewton::GaussNewton,
 };
-// use argmin::solver::gaussnewton::GaussNewton; // Added
 use argmin_observer_slog::SlogLogger; // Added
 use log::{info, warn};
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX};

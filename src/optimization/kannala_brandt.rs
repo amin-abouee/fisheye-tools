@@ -1,6 +1,3 @@
-// src/optimization/kannala_brandt.rs
-
-// use crate::camera::kannala_brandt::KannalaBrandtModel;
 use crate::camera::{CameraModel, CameraModelError, KannalaBrandtModel};
 use crate::optimization::Optimizer;
 use argmin::{

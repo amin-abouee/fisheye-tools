@@ -4,7 +4,6 @@ pub mod optimization;
 
 use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
 use crate::optimization::Optimizer;
-// , DoubleSphereOptimizationCost, KannalaBrandtOptimizationCost, RadTanOptimizationCost};
 use clap::Parser;
 use flexi_logger::{colored_detailed_format, detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
