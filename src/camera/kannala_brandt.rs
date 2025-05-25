@@ -1,20 +1,124 @@
+//! Implements the Kannala-Brandt camera model, suitable for fisheye or wide-angle lenses.
+//!
+//! This module provides the [`KannalaBrandtModel`] struct and its associated methods
+//! for representing and working with a camera that follows the Kannala-Brandt
+//! distortion model. This model is often used for cameras with significant radial
+//! distortion, such as fisheye lenses. It adheres to the [`CameraModel`] trait
+//! defined in the parent `camera` module ([`crate::camera`]).
+//!
+//! # References
+//!
+//! The Kannala-Brandt model is based on the paper:
+//! *   Kannala, J., & Brandt, S. S. (2006). A generic camera model and calibration
+//!     method for conventional, wide-angle, and fish-eye lenses.
+//!     *IEEE Transactions on Pattern Analysis and Machine Intelligence*, *28*(8), 1335-1340.
+
 use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{f64::consts::PI, fs, io::Write};
 use yaml_rust::YamlLoader;
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
+
+/// Implements the Kannala-Brandt camera model for fisheye/wide-angle lenses.
+///
+/// This struct holds the intrinsic parameters ([`Intrinsics`]: fx, fy, cx, cy),
+/// image [`Resolution`], and a set of 4 distortion coefficients (`k1, k2, k3, k4`)
+/// that define the symmetric radial distortion characteristics of the lens according
+/// to the Kannala-Brandt model. The projection function is a polynomial function of theta,
+/// the angle between the 3D point and the optical axis.
+///
+/// # Fields
+///
+/// *   `intrinsics`: [`Intrinsics`] - Holds the focal lengths (fx, fy) and principal point (cx, cy).
+/// *   `resolution`: [`Resolution`] - The width and height of the camera image in pixels.
+/// *   `distortions`: `[f64; 4]` - The 4 distortion coefficients: `[k1, k2, k3, k4]`.
+///     These coefficients model the radial distortion as a polynomial function of the angle theta.
+///
+/// # Examples
+///
+/// ```rust
+/// use nalgebra::DVector;
+/// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
+/// use vision_toolkit_rs::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
+///
+/// // Parameters: fx, fy, cx, cy, k1, k2, k3, k4
+/// let params = DVector::from_vec(vec![
+///     460.0, 460.0, 320.0, 240.0,    // Intrinsics
+///     -0.01, 0.05, -0.08, 0.04     // Distortion (k1, k2, k3, k4)
+/// ]);
+/// let mut kb_model = KannalaBrandtModel::new(&params).unwrap();
+/// kb_model.resolution = Resolution { width: 640, height: 480 };
+///
+/// println!("Created Kannala-Brandt model: {:?}", kb_model);
+/// assert_eq!(kb_model.intrinsics.fx, 460.0);
+/// assert_eq!(kb_model.distortions[0], -0.01); // k1
+///
+/// // Example of loading from a (hypothetical) YAML
+/// // let model_from_yaml = KannalaBrandtModel::load_from_yaml("path/to/your_kb_camera.yaml");
+/// // if let Ok(model) = model_from_yaml {
+/// //     println!("Loaded model intrinsics: {:?}", model.get_intrinsics());
+/// //     println!("Loaded model distortions: {:?}", model.get_distortion());
+/// // }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KannalaBrandtModel {
+    /// Camera intrinsic parameters: `fx`, `fy`, `cx`, `cy`.
     pub intrinsics: Intrinsics,
+    /// Image resolution as width and height in pixels.
     pub resolution: Resolution,
-    pub distortions: [f64; 4], // k1, k2, k3, k4
+    /// The 4 distortion coefficients: `[k1, k2, k3, k4]`.
+    pub distortions: [f64; 4],
 }
 
 // Removed KannalaBrandtOptimizationCost struct and its trait implementations
 
 impl KannalaBrandtModel {
-    // Constructor used by optimization cost function
+    /// Creates a new [`KannalaBrandtModel`] from a DVector of parameters.
+    ///
+    /// This constructor initializes the model with the provided parameters.
+    /// The image resolution is initialized to 0x0 and should be set explicitly
+    /// or by loading from a configuration file like YAML.
+    /// The current implementation of `new` does not call `validate_params`.
+    ///
+    /// # Arguments
+    ///
+    /// * `parameters`: A `&DVector<f64>` containing the camera parameters in the following order:
+    ///   1.  `fx`: Focal length along the x-axis.
+    ///   2.  `fy`: Focal length along the y-axis.
+    ///   3.  `cx`: Principal point x-coordinate.
+    ///   4.  `cy`: Principal point y-coordinate.
+    ///   5.  `k1`: First distortion coefficient.
+    ///   6.  `k2`: Second distortion coefficient.
+    ///   7.  `k3`: Third distortion coefficient.
+    ///   8.  `k4`: Fourth distortion coefficient.
+    ///
+    /// # Return Value
+    ///
+    /// Returns a `Result<Self, CameraModelError>`.
+    ///
+    /// # Errors
+    ///
+    /// * [`CameraModelError::InvalidParams`]: If the `parameters` vector does not contain exactly 8 elements.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use nalgebra::DVector;
+    /// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
+    /// use vision_toolkit_rs::camera::Resolution;
+    ///
+    /// let params_vec = DVector::from_vec(vec![
+    ///     461.58, 460.28, 366.28, 249.08, // fx, fy, cx, cy
+    ///     -0.012, 0.057, -0.084, 0.043    // k1, k2, k3, k4
+    /// ]);
+    /// let mut model = KannalaBrandtModel::new(&params_vec).unwrap();
+    /// model.resolution = Resolution { width: 752, height: 480 }; // Set resolution manually
+    ///
+    /// assert_eq!(model.intrinsics.fx, 461.58);
+    /// assert_eq!(model.distortions[0], -0.012); // k1
+    /// assert_eq!(model.resolution.width, 752);
+    /// ```
     pub fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
         if parameters.len() != 8 {
             return Err(CameraModelError::InvalidParams(format!(
@@ -39,11 +143,62 @@ impl KannalaBrandtModel {
 
         // Basic validation, full validation might depend on resolution being set.
         // model.validate_params()?; // Cannot fully validate without resolution
+        // Documenting current behavior: validate_params is not called here.
         Ok(model)
     }
 }
 
 impl CameraModel for KannalaBrandtModel {
+    /// Projects a 3D point from camera coordinates to 2D image coordinates.
+    ///
+    /// The projection uses the Kannala-Brandt model:
+    /// 1.  Calculates `r = sqrt(x^2 + y^2)`.
+    /// 2.  Calculates `theta = atan2(r, z)`.
+    /// 3.  Applies the polynomial distortion model: `theta_d = theta * (1 + k1*theta^2 + k2*theta^4 + k3*theta^6 + k4*theta^8)`.
+    /// 4.  Projects to image plane: `u = fx * theta_d * (x/r) + cx`, `v = fy * theta_d * (y/r) + cy`.
+    /// The Jacobian can optionally be computed with respect to the 8 model parameters
+    /// (fx, fy, cx, cy, k1, k2, k3, k4).
+    ///
+    /// # Arguments
+    ///
+    /// * `point_3d`: A `&Vector3<f64>` representing the 3D point (X, Y, Z) in camera coordinates.
+    /// * `compute_jacobian`: A boolean flag. If true, the Jacobian of the projection
+    ///   with respect to the camera parameters is computed.
+    ///
+    /// # Return Value
+    ///
+    /// Returns a `Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError>`.
+    /// On success, it provides a tuple containing:
+    /// *   The projected 2D point (`Vector2<f64>`) in pixel coordinates (u, v).
+    /// *   An `Option<DMatrix<f64>>` which is `Some(jacobian)` if `compute_jacobian` was true
+    ///     (2x8 matrix), or `None` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// * [`CameraModelError::PointIsOutSideImage`]: If the 3D point's Z-coordinate is negative.
+    /// * [`CameraModelError::PointAtCameraCenter`]: If the 3D point's Z-coordinate is very close to zero.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use nalgebra::{DVector, Vector3};
+    /// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
+    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    ///
+    /// let params = DVector::from_vec(vec![460.0,460.0,320.0,240.0, -0.01,0.05,-0.08,0.04]);
+    /// let mut model = KannalaBrandtModel::new(&params).unwrap();
+    /// model.resolution = Resolution { width: 640, height: 480 };
+    ///
+    /// let point_3d = Vector3::new(0.1, 0.2, 1.0);
+    /// match model.project(&point_3d, false) {
+    ///     Ok((point_2d, jac_opt)) => {
+    ///         println!("Projected: ({}, {})", point_2d.x, point_2d.y);
+    ///         assert!(jac_opt.is_none());
+    ///         assert!(point_2d.x > 0.0 && point_2d.y > 0.0); // Basic check
+    ///     },
+    ///     Err(e) => panic!("Projection failed: {:?}", e),
+    /// }
+    /// ```
     fn project(
         &self,
         point_3d: &Vector3<f64>,
@@ -155,6 +310,55 @@ impl CameraModel for KannalaBrandtModel {
         Ok((point_2d, jacobian_option))
     }
 
+    /// Unprojects a 2D image point to a 3D ray in camera coordinates.
+    ///
+    /// This method applies the inverse Kannala-Brandt model. It first converts
+    /// the pixel coordinates `(u,v)` to normalized, distorted coordinates `(mx, my)`.
+    /// The radial distance `ru = sqrt(mx^2 + my^2)` corresponds to `theta_d`.
+    /// The core of the unprojection is to find `theta` (the angle of the 3D ray with the
+    /// optical axis) by iteratively solving the polynomial equation
+    /// `theta_d = theta * (1 + k1*theta^2 + k2*theta^4 + k3*theta^6 + k4*theta^8)`
+    /// for `theta`, typically using Newton-Raphson method.
+    /// Once `theta` is found, the 3D ray `(x, y, z)` is constructed as
+    /// `x = sin(theta) * (mx/ru)`, `y = sin(theta) * (my/ru)`, `z = cos(theta)`,
+    /// and then normalized.
+    ///
+    /// # Arguments
+    ///
+    /// * `point_2d`: A `&Vector2<f64>` representing the 2D point (u, v) in pixel coordinates.
+    ///
+    /// # Return Value
+    ///
+    /// Returns a `Result<Vector3<f64>, CameraModelError>`.
+    /// On success, it provides the normalized 3D ray (`Vector3<f64>`) corresponding to the 2D point.
+    ///
+    /// # Errors
+    ///
+    /// * [`CameraModelError::PointIsOutSideImage`]: If the input 2D point is outside the camera's
+    ///   resolution (if resolution is set and > 0).
+    /// * [`CameraModelError::NumericalError`]: If the iterative Newton-Raphson method fails
+    ///   to converge when solving for `theta`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use nalgebra::{DVector, Vector2};
+    /// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
+    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    ///
+    /// let params = DVector::from_vec(vec![460.0,460.0,320.0,240.0, -0.01,0.05,-0.08,0.04]);
+    /// let mut model = KannalaBrandtModel::new(&params).unwrap();
+    /// model.resolution = Resolution { width: 640, height: 480 };
+    ///
+    /// let point_2d = Vector2::new(330.0, 250.0); // A point near the center
+    /// match model.unproject(&point_2d) {
+    ///     Ok(ray_3d) => {
+    ///         println!("Unprojected ray: ({}, {}, {})", ray_3d.x, ray_3d.y, ray_3d.z);
+    ///         assert!((ray_3d.norm() - 1.0).abs() < 1e-6); // Should be a unit vector
+    ///     },
+    ///     Err(e) => panic!("Unprojection failed: {:?}", e),
+    /// }
+    /// ```
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
         // Check if point is outside resolution, if resolution is set
         if self.resolution.width > 0 && self.resolution.height > 0 {
@@ -274,6 +478,35 @@ impl CameraModel for KannalaBrandtModel {
         Ok(point3d.normalize()) // Ensure unit vector
     }
 
+    /// Loads [`KannalaBrandtModel`] parameters from a YAML file.
+    ///
+    /// The YAML file is expected to follow a structure where camera parameters are nested
+    /// under `cam0`. The intrinsic parameters (`fx`, `fy`, `cx`, `cy`) are read from
+    /// `cam0.intrinsics`, and the Kannala-Brandt distortion coefficients (`k1, k2, k3, k4`)
+    /// are read from `cam0.distortion`. The `resolution` (width, height) is also
+    /// expected under `cam0.resolution`.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: A string slice representing the path to the YAML file.
+    ///
+    /// # Return Value
+    ///
+    /// Returns a `Result<Self, CameraModelError>`. On success, it provides an instance
+    /// of [`KannalaBrandtModel`] populated with parameters from the file.
+    ///
+    /// # Errors
+    ///
+    /// This function can return:
+    /// * [`CameraModelError::IOError`]: If there's an issue reading the file.
+    /// * [`CameraModelError::YamlError`]: If the YAML content is malformed or cannot be parsed.
+    /// * [`CameraModelError::InvalidParams`]: If the YAML structure is missing expected fields
+    ///   (e.g., "cam0", "intrinsics", "resolution", "distortion") or if parameter values
+    ///   are of incorrect types or counts.
+    /// * Errors from [`KannalaBrandtModel::validate_params()`] if the loaded intrinsic parameters are invalid.
+    ///
+    /// # Related
+    /// * [`KannalaBrandtModel::save_to_yaml()`]
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
         let contents = fs::read_to_string(path)?;
         let docs = YamlLoader::load_from_str(&contents)?;
@@ -292,73 +525,74 @@ impl CameraModel for KannalaBrandtModel {
         }
 
         let intrinsics_yaml = cam_node["intrinsics"].as_vec().ok_or_else(|| {
-            CameraModelError::InvalidParams("Invalid intrinsics format".to_string())
+            CameraModelError::InvalidParams("Invalid intrinsics format in YAML: not an array".to_string())
         })?;
         if intrinsics_yaml.len() < 4 {
             return Err(CameraModelError::InvalidParams(
-                "Intrinsics vector too short".to_string(),
+                "Intrinsics array in YAML must have at least 4 elements (fx, fy, cx, cy)".to_string(),
             ));
         }
 
         let resolution_yaml = cam_node["resolution"].as_vec().ok_or_else(|| {
-            CameraModelError::InvalidParams("Invalid resolution format".to_string())
+            CameraModelError::InvalidParams("Invalid resolution format in YAML: not an array".to_string())
         })?;
         if resolution_yaml.len() < 2 {
             return Err(CameraModelError::InvalidParams(
-                "Resolution vector too short".to_string(),
+                "Resolution array in YAML must have at least 2 elements (width, height)".to_string(),
             ));
         }
 
+        // Note: YAML field name for distortion in load is "distortion"
         let distortion_coeffs_yaml = cam_node["distortion"].as_vec().ok_or_else(|| {
             CameraModelError::InvalidParams(
-                "Missing or invalid distortion coefficients".to_string(),
+                "Missing or invalid 'distortion' array in YAML".to_string(),
             )
         })?;
         if distortion_coeffs_yaml.len() < 4 {
             return Err(CameraModelError::InvalidParams(
-                "'distortion_coeffs' must have at least 4 elements".to_string(),
+                "'distortion' array in YAML must have at least 4 elements (k1, k2, k3, k4)".to_string(),
             ));
         }
 
         let intrinsics = Intrinsics {
             fx: intrinsics_yaml[0]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx in YAML: not a float".to_string()))?,
             fy: intrinsics_yaml[1]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy in YAML: not a float".to_string()))?,
             cx: intrinsics_yaml[2]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx in YAML: not a float".to_string()))?,
             cy: intrinsics_yaml[3]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy in YAML: not a float".to_string()))?,
         };
 
         let resolution = Resolution {
             width: resolution_yaml[0]
                 .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width".to_string()))?
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width in YAML: not an integer".to_string()))?
                 as u32,
             height: resolution_yaml[1]
                 .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height".to_string()))?
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height in YAML: not an integer".to_string()))?
                 as u32,
         };
 
         let distortions = [
             distortion_coeffs_yaml[0]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k1".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k1 in YAML: not a float".to_string()))?,
             distortion_coeffs_yaml[1]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k2".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k2 in YAML: not a float".to_string()))?,
             distortion_coeffs_yaml[2]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k3".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k3 in YAML: not a float".to_string()))?,
             distortion_coeffs_yaml[3]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k4".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k4 in YAML: not a float".to_string()))?,
         ];
 
         let model = KannalaBrandtModel {
@@ -371,6 +605,28 @@ impl CameraModel for KannalaBrandtModel {
         Ok(model)
     }
 
+    /// Saves the [`KannalaBrandtModel`] parameters to a YAML file.
+    ///
+    /// The parameters are saved under the `cam0` key. The intrinsic parameters
+    /// (`fx, fy, cx, cy`) are saved in the `intrinsics` array. The distortion
+    /// coefficients (`k1, k2, k3, k4`) are saved in the `distortion_coeffs` array.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: A string slice representing the path to the YAML file where parameters will be saved.
+    ///
+    /// # Return Value
+    ///
+    /// Returns `Ok(())` on successful save.
+    ///
+    /// # Errors
+    ///
+    /// This function can return:
+    /// * [`CameraModelError::YamlError`]: If there's an issue serializing the data to YAML format.
+    /// * [`CameraModelError::IOError`]: If there's an issue creating or writing to the file.
+    ///
+    /// # Related
+    /// * [`KannalaBrandtModel::load_from_yaml()`]
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         let mut cam0_map = serde_yaml::Mapping::new();
         cam0_map.insert(
@@ -387,6 +643,7 @@ impl CameraModel for KannalaBrandtModel {
             ])
             .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
         );
+        // Note: YAML field name for distortion in save is "distortion_coeffs"
         cam0_map.insert(
             serde_yaml::Value::String("distortion_coeffs".to_string()),
             serde_yaml::to_value(self.distortions.to_vec())
@@ -419,21 +676,53 @@ impl CameraModel for KannalaBrandtModel {
         Ok(())
     }
 
+    /// Validates the intrinsic parameters of the [`KannalaBrandtModel`].
+    ///
+    /// This method primarily checks the validity of the core intrinsic parameters
+    /// (focal lengths, principal point) using [`validation::validate_intrinsics`].
+    /// Currently, there are no specific validation rules implemented for the
+    /// Kannala-Brandt distortion coefficients (`k1` through `k4`) themselves, as they
+    /// can typically be positive or negative.
+    ///
+    /// # Return Value
+    ///
+    /// Returns `Ok(())` if the intrinsic parameters are valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`CameraModelError`] if intrinsic parameter validation fails, as propagated
+    /// from [`validation::validate_intrinsics`] (e.g.,
+    /// [`CameraModelError::FocalLengthMustBePositive`],
+    /// [`CameraModelError::PrincipalPointMustBeFinite`]).
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
-        // No specific validation for Kannala-Brandt distortions k1-k4 mentioned,
-        // they can be positive or negative.
+        // No specific validation for Kannala-Brandt distortions k1-k4 mentioned in common practice,
+        // as they can be positive or negative. Their impact is on the projection function.
         Ok(())
     }
 
+    /// Returns a clone of the camera's image resolution.
+    ///
+    /// # Return Value
+    /// A [`Resolution`] struct containing the width and height of the camera image.
     fn get_resolution(&self) -> Resolution {
         self.resolution.clone()
     }
 
+    /// Returns a clone of the camera's intrinsic parameters.
+    ///
+    /// # Return Value
+    /// An [`Intrinsics`] struct containing `fx`, `fy`, `cx`, and `cy`.
     fn get_intrinsics(&self) -> Intrinsics {
         self.intrinsics.clone()
     }
 
+    /// Returns a vector containing the distortion coefficients of the camera.
+    ///
+    /// The coefficients are returned in the order: `[k1, k2, k3, k4]`.
+    ///
+    /// # Return Value
+    /// A `Vec<f64>` containing the 4 distortion coefficients.
     fn get_distortion(&self) -> Vec<f64> {
         self.distortions.to_vec()
     }
@@ -442,13 +731,14 @@ impl CameraModel for KannalaBrandtModel {
     // optimize removed from impl CameraModel for KannalaBrandtModel
 }
 
+/// Unit tests for the [`KannalaBrandtModel`].
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
-    // Helper function to get a sample KannalaBrandtModel instance
-    // This could load from YAML or use the new() function with sample parameters
+    /// Helper function to create a sample [`KannalaBrandtModel`] instance for testing.
+    /// Parameters are taken from "samples/kannala_brandt.yaml".
     fn get_sample_kb_model() -> KannalaBrandtModel {
         // Parameters from samples/kannala_brandt.yaml
         // intrinsics: [461.58688085556616, 460.2811732644195, 366.28603126815506, 249.08026891791644]
@@ -472,6 +762,7 @@ mod tests {
         model
     }
 
+    /// Tests loading [`KannalaBrandtModel`] parameters from "samples/kannala_brandt.yaml".
     #[test]
     fn test_load_from_yaml_ok() {
         // Load the camera model from YAML
@@ -489,20 +780,21 @@ mod tests {
         assert_relative_eq!(model.distortions[0], -0.012523386218579752, epsilon = 1e-9); // k1
         assert_relative_eq!(model.distortions[1], 0.057836801948828065, epsilon = 1e-9); // k2
         assert_relative_eq!(model.distortions[2], -0.08495347810986263, epsilon = 1e-9); // k3
-        assert_relative_eq!(model.distortions[3], 0.04362766880887814, epsilon = 1e-9);
-        // k4
+        assert_relative_eq!(model.distortions[3], 0.04362766880887814, epsilon = 1e-9);  // k4
     }
 
+    /// Tests loading from a non-existent YAML file, expecting an I/O error.
     #[test]
     fn test_load_from_yaml_file_not_found() {
         let model_result = KannalaBrandtModel::load_from_yaml("samples/non_existent_file.yaml");
         assert!(model_result.is_err());
         match model_result.err().unwrap() {
             CameraModelError::IOError(_) => {} // Expected
-            _ => panic!("Expected IOError"),
+            other_error => panic!("Expected IOError, got {:?}", other_error),
         }
     }
 
+    /// Tests the consistency of projection and unprojection for the [`KannalaBrandtModel`].
     #[test]
     fn test_project_unproject_identity() {
         let model = get_sample_kb_model();
@@ -531,7 +823,7 @@ mod tests {
                         assert_relative_eq!(
                             unprojected_point_3d.x,
                             point_3d_normalized.x,
-                            epsilon = 1e-5
+                            epsilon = 1e-5 // Using a slightly larger epsilon due to iterative nature
                         );
                         assert_relative_eq!(
                             unprojected_point_3d.y,
@@ -551,6 +843,7 @@ mod tests {
         }
     }
 
+    /// Tests projection of a point exactly at the camera's optical center (0,0,0).
     #[test]
     fn test_project_point_at_center() {
         let model = get_sample_kb_model();
@@ -559,6 +852,7 @@ mod tests {
         assert!(matches!(result, Err(CameraModelError::PointAtCameraCenter)));
     }
 
+    /// Tests projection of a point located behind the camera.
     #[test]
     fn test_project_point_behind_camera() {
         let model = get_sample_kb_model();
@@ -567,6 +861,7 @@ mod tests {
         assert!(matches!(result, Err(CameraModelError::PointIsOutSideImage)));
     }
 
+    /// Tests projection with Jacobian computation.
     #[test]
     fn test_project_with_jacobian() {
         let model = get_sample_kb_model();
@@ -574,28 +869,30 @@ mod tests {
 
         match model.project(&point_3d, true) {
             Ok((_point_2d, jacobian_option)) => {
-                assert!(jacobian_option.is_some());
+                assert!(jacobian_option.is_some(), "Jacobian should be Some when requested");
                 let jacobian = jacobian_option.unwrap();
-                assert_eq!(jacobian.nrows(), 2); // 2D point (x, y)
-                assert_eq!(jacobian.ncols(), 8); // 8 parameters (fx, fy, cx, cy, k1, k2, k3, k4)
-                                                 // Further checks on Jacobian values would require numerical differentiation
-                                                 // or known analytical values for specific points.
+                assert_eq!(jacobian.nrows(), 2, "Jacobian should have 2 rows (for u, v)");
+                assert_eq!(jacobian.ncols(), 8, "Jacobian should have 8 columns (for fx,fy,cx,cy,k1,k2,k3,k4)");
+                // Further checks on Jacobian values would require numerical differentiation
+                // or known analytical values for specific points.
             }
             Err(e) => panic!("Projection failed: {:?}", e),
         }
     }
 
+    /// Tests unprojection of a point outside the image resolution bounds.
     #[test]
     fn test_unproject_out_of_bounds() {
         let model = get_sample_kb_model();
         let point_2d_outside = Vector2::new(
-            model.resolution.width as f64 + 10.0,
-            model.resolution.height as f64 + 10.0,
+            model.resolution.width as f64 + 10.0, // 10 pixels outside width
+            model.resolution.height as f64 + 10.0, // 10 pixels outside height
         );
         let result = model.unproject(&point_2d_outside);
         assert!(matches!(result, Err(CameraModelError::PointIsOutSideImage)));
     }
 
+    /// Tests the getter methods: `get_intrinsics`, `get_resolution`, and `get_distortion`.
     #[test]
     fn test_getters() {
         let model = get_sample_kb_model();
@@ -615,7 +912,7 @@ mod tests {
         assert_relative_eq!(distortion_coeffs[0], -0.012523386218579752); // k1
         assert_relative_eq!(distortion_coeffs[1], 0.057836801948828065); // k2
         assert_relative_eq!(distortion_coeffs[2], -0.08495347810986263); // k3
-        assert_relative_eq!(distortion_coeffs[3], 0.04362766880887814); // k4
+        assert_relative_eq!(distortion_coeffs[3], 0.04362766880887814);   // k4
     }
 
     // --- Tests for linear_estimation and optimize ---
@@ -681,7 +978,7 @@ mod tests {
     //         assert_relative_eq!(
     //             estimated_model.distortions[i],
     //             ground_truth_model.distortions[i],
-    //             epsilon = 1e-1
+    //             epsilon = 1e-1 // Example epsilon, adjust based on expected accuracy
     //         );
     //     }
     // }
