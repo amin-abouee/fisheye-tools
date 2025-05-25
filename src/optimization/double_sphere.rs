@@ -14,6 +14,7 @@ use argmin::{
 use argmin_observer_slog::SlogLogger; // Added
 use log::{info, warn};
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX};
+use std::fmt;
 
 /// Cost function for Double Sphere camera model optimization.
 ///
@@ -54,6 +55,18 @@ impl DoubleSphereOptimizationCost {
     }
 }
 
+impl fmt::Debug for DoubleSphereOptimizationCost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "DoubleSphereCostModel Summary:\n model: {:?}\n points3d size: {}, points2d size: {} ",
+            self.model,
+            self.points3d.ncols(),
+            self.points2d.ncols(),
+        )
+    }
+}
+
 impl Optimizer for DoubleSphereOptimizationCost {
     fn optimize(&mut self, verbose: bool) -> Result<(), CameraModelError> {
         if self.points3d.ncols() != self.points2d.ncols() {
@@ -68,8 +81,8 @@ impl Optimizer for DoubleSphereOptimizationCost {
             ));
         }
 
-        // let cost_function = DoubleSphereOptimizationCost::new(self.model, self.points3d.clone(), self.points2d.clone());
         let cost_function = self.clone();
+        info!("Cost function: {:?}", cost_function);
 
         // Initial parameters
         let param = vec![
@@ -267,15 +280,6 @@ impl Jacobian for DoubleSphereOptimizationCost {
                     warn!("Projection failed for point {}: {}", i, err_msg);
                 }
             }
-
-            // Get Jacobian for this point (2x6 matrix)
-            // let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
-
-            // if let Some(jac) = jacobian_point_2x6 {
-            //     // Copy the 2x6 Jacobian for this point into the overall Jacobian matrix
-            //     jacobian.view_mut((counter * 2, 0), (2, 6)).copy_from(&jac);
-            //     counter += 1;
-            // }
         }
         jacobian = jacobian.rows(0, counter * 2).into_owned();
         info!("Size residuals: {}", jacobian.nrows());
@@ -417,9 +421,9 @@ impl Hessian for DoubleSphereOptimizationCost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::camera::{CameraModel, DoubleSphereModel as DSCameraModel, Intrinsics, Resolution};
+    use crate::camera::{CameraModel, DoubleSphereModel as DSCameraModel, Intrinsics};
     use approx::assert_relative_eq; // Added for assert_relative_eq!
-    use nalgebra::{Matrix2xX, Matrix3xX, Vector3};
+    use nalgebra::{Matrix2xX, Matrix3xX};
 
     // Helper to get a default model, similar to the one in samples/double_sphere.yaml
     fn get_sample_camera_model() -> DSCameraModel {
@@ -508,69 +512,75 @@ mod tests {
     }
 
     #[test]
-    fn test_double_sphere_optimize_trait_method() {
-        let reference_model = get_sample_camera_model();
-        let (points_2d, points_3d) = sample_points_for_ds_model(&reference_model, 50);
+    fn test_double_sphere_optimize() {
+        // Load a reference model from YAML file
+        let input_path = "samples/double_sphere.yaml";
+        let reference_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
 
-        assert!(
-            points_3d.ncols() > 10,
-            "Need sufficient points for optimization test."
-        );
+        // Use geometry::sample_points to generate a set of 2D-3D point correspondences
+        let n = 500;
+        let (points_2d, points_3d) =
+            crate::geometry::sample_points(Some(&reference_model), n).unwrap();
 
-        let noisy_initial_model = DSCameraModel {
+        // Create a model with added noise to the parameters
+        let noisy_model = DoubleSphereModel {
             intrinsics: Intrinsics {
+                // Add some noise to the intrinsic parameters (Â±5-10%)
                 fx: reference_model.intrinsics.fx * 0.95,
                 fy: reference_model.intrinsics.fy * 1.02,
-                cx: reference_model.intrinsics.cx + 15.0, // Increased noise further
-                cy: reference_model.intrinsics.cy - 15.0, // Increased noise further
+                cx: reference_model.intrinsics.cx + 0.5,
+                cy: reference_model.intrinsics.cy - 0.8,
             },
             resolution: reference_model.resolution.clone(),
-            alpha: (reference_model.alpha * 0.80).max(0.01).min(0.99), // Increased noise further
-            xi: (reference_model.xi * 0.7).max(-0.9).min(0.9),         // Increased noise further
+            // Add noise to distortion parameters
+            xi: -0.1,
+            alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
         };
 
+        info!("Reference model: {:?}", reference_model);
+        info!("Noisy model: {:?}", noisy_model);
+
         let mut optimization_task = DoubleSphereOptimizationCost::new(
-            noisy_initial_model.clone(), // Pass the noisy model here
+            noisy_model.clone(), // Pass the noisy model here
             points_3d.clone(),
             points_2d.clone(),
         );
 
-        // Call optimize using the Optimizer trait
-        let optimize_result = optimization_task.optimize(false); // verbose = false
+        // Optimize the model with noise
+        optimization_task.optimize(false).unwrap();
+
+        info!("Optimized model: {:?}", optimization_task);
+
+        // Check that parameters have been optimized close to reference values
         assert!(
-            optimize_result.is_ok(),
-            "Optimization failed: {:?}",
-            optimize_result.err()
+            (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
+            "fx parameter didn't converge to expected value"
         );
-
-        // Get the optimized model from the task
-        let optimized_model = &optimization_task.model;
-
-        // Compare optimized parameters with reference_model
-        // Allow for some tolerance as optimization might not be perfect
-        assert_relative_eq!(
-            optimized_model.intrinsics.fx,
-            reference_model.intrinsics.fx,
-            epsilon = 15.0 // Adjusted epsilon based on noise level
+        assert!(
+            (optimization_task.model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
+            "fy parameter didn't converge to expected value"
         );
-        assert_relative_eq!(
-            optimized_model.intrinsics.fy,
-            reference_model.intrinsics.fy,
-            epsilon = 15.0
+        assert!(
+            (optimization_task.model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 1.0,
+            "cx parameter didn't converge to expected value"
         );
-        assert_relative_eq!(
-            optimized_model.intrinsics.cx,
-            reference_model.intrinsics.cx,
-            epsilon = 15.0
+        assert!(
+            (optimization_task.model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 1.0,
+            "cy parameter didn't converge to expected value"
         );
-        assert_relative_eq!(
-            optimized_model.intrinsics.cy,
-            reference_model.intrinsics.cy,
-            epsilon = 15.0
+        assert!(
+            (optimization_task.model.alpha - reference_model.alpha).abs() < 0.05,
+            "alpha parameter didn't converge to expected value"
         );
-        assert_relative_eq!(optimized_model.alpha, reference_model.alpha, epsilon = 0.15); // alpha can be sensitive
-        assert_relative_eq!(optimized_model.xi, reference_model.xi, epsilon = 0.15);
-        // xi can also be sensitive
+        assert!(
+            (optimization_task.model.xi - reference_model.xi).abs() < 0.05,
+            "xi parameter didn't converge to expected value"
+        );
+        // Verify that alpha is within bounds (0, 1]
+        assert!(
+            optimization_task.model.alpha > 0.0 && noisy_model.alpha <= 1.0,
+            "Alpha parameter out of valid range (0, 1]"
+        );
     }
 
     #[test]

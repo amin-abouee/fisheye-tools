@@ -472,7 +472,7 @@ mod tests {
 
         // For linear estimation, we typically assume intrinsics are known or roughly known.
         // The linear estimation part of the Optimizer trait will update the distortions in its internal model.
-        let mut initial_model_for_estimation = KBCameraModel {
+        let initial_model_for_estimation = KBCameraModel {
             intrinsics: reference_model.intrinsics.clone(), // Use reference intrinsics
             resolution: reference_model.resolution.clone(),
             distortions: [0.0, 0.0, 0.0, 0.0], // Start with zero distortion for estimation

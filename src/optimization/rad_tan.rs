@@ -8,7 +8,7 @@ use crate::optimization::Optimizer;
 //     solver::gaussnewton::GaussNewton,
 // };
 // use argmin_observer_slog::SlogLogger;
-use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3}; // If logging is needed
+use nalgebra::{Matrix2xX, Matrix3xX}; // If logging is needed
 
 #[derive(Clone)]
 pub struct RadTanOptimizationCost {
@@ -28,7 +28,7 @@ impl RadTanOptimizationCost {
     }
 }
 impl Optimizer for RadTanOptimizationCost {
-    fn optimize(&mut self, verbose: bool) -> Result<(), CameraModelError> {
+    fn optimize(&mut self, _verbose: bool) -> Result<(), CameraModelError> {
         Ok(())
     }
 
