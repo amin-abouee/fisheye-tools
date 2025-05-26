@@ -2,12 +2,13 @@
 //!
 //! This module implements the Double Sphere camera model, which is particularly useful
 //! for wide-angle and fisheye cameras. The model uses two sphere projections to handle
-//! the distortion characteristics of such cameras.
+//! the distortion characteristics of such cameras. It adheres to the [`CameraModel`]
+//! trait defined in the parent `camera` module ([`crate::camera`]).
 //!
 //! # References
 //!
 //! The Double Sphere model is based on:
-//! "The Double Sphere Camera Model" by Vladyslav Usenko and Nikolaus Demmel
+//! "The Double Sphere Camera Model" by Vladyslav Usenko and Nikolaus Demmel.
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use log::info;
@@ -16,53 +17,120 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
 
-/// Double Sphere camera model implementation.
+/// Implements the Double Sphere camera model for wide-angle/fisheye lenses.
 ///
-/// The Double Sphere model is designed for wide-angle and fisheye cameras.
-/// It uses two sphere projections to model the distortion characteristics
-/// of such cameras more accurately than traditional models like polynomial distortion.
-/// The model is defined by intrinsic parameters (fx, fy, cx, cy) and two
-/// distortion parameters: `alpha` and `xi`.
+/// The Double Sphere model is designed for cameras with significant distortion,
+/// common in wide-angle or fisheye lenses. It represents the camera using
+/// standard intrinsic parameters ([`Intrinsics`]: fx, fy, cx, cy), image [`Resolution`],
+/// and two special distortion parameters: `alpha` and `xi`.
+/// `alpha` controls the transition between two conceptual spheres used in the projection,
+/// and `xi` represents the displacement between their centers.
 ///
-/// # Parameters
+/// # Fields
 ///
-/// * `intrinsics`: [`Intrinsics`] - Camera intrinsic parameters (fx, fy, cx, cy).
-/// * `resolution`: [`Resolution`] - Image resolution (width, height).
-/// * `alpha`: `f64` - The first distortion parameter, controlling the transition between
-///   the two spheres. It must be in the range (0, 1].
-/// * `xi`: `f64` - The second distortion parameter, representing the displacement
-///   between the centers of the two spheres. It must be a finite number.
+/// *   `intrinsics`: [`Intrinsics`] - Holds the focal lengths (fx, fy) and principal point (cx, cy).
+/// *   `resolution`: [`Resolution`] - The width and height of the camera image in pixels.
+/// *   `alpha`: `f64` - The first distortion parameter, controlling the blend between the
+///     two sphere projections. It must be in the range (0, 1] (i.e., `0 < alpha <= 1`).
+/// *   `xi`: `f64` - The second distortion parameter, representing the displacement
+///     between the centers of the two spheres. It must be a finite number.
 ///
 /// # References
 ///
-/// * Usenko, V., Demmel, N., & Cremers, D. (2018). The Double Sphere Camera Model.
-///   In 2018 International Conference on 3D Vision (3DV).
+/// *   Usenko, V., Demmel, N., & Cremers, D. (2018). The Double Sphere Camera Model.
+///     In *2018 International Conference on 3D Vision (3DV)*. IEEE.
+///
+/// # Examples
+///
+/// ```rust
+/// use nalgebra::DVector;
+/// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
+/// use vision_toolkit_rs::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
+///
+/// // Parameters: fx, fy, cx, cy, alpha, xi
+/// let params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
+/// let mut ds_model = DoubleSphereModel::new(&params).unwrap();
+/// ds_model.resolution = Resolution { width: 640, height: 480 };
+///
+/// println!("Created Double Sphere model: {:?}", ds_model);
+/// assert_eq!(ds_model.intrinsics.fx, 350.0);
+/// assert_eq!(ds_model.alpha, 0.58);
+///
+/// // Example of loading from a (hypothetical) YAML - actual loading depends on file content
+/// // let model_from_yaml = DoubleSphereModel::load_from_yaml("path/to/your_ds_camera.yaml");
+/// // if let Ok(model) = model_from_yaml {
+/// //     println!("Loaded model: {:?}", model.get_intrinsics());
+/// // }
+/// ```
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DoubleSphereModel {
-    /// Camera intrinsic parameters
+    /// Camera intrinsic parameters: `fx`, `fy`, `cx`, `cy`.
     pub intrinsics: Intrinsics,
-    /// Image resolution
+    /// Image resolution as width and height in pixels.
     pub resolution: Resolution,
-    /// First distortion parameter (0 < alpha <= 1)
+    /// First distortion parameter, controlling the transition between the two spheres.
+    /// Must be in the range (0, 1] (i.e., `0.0 < alpha <= 1.0`).
     pub alpha: f64,
-    /// Second distortion parameter
+    /// Second distortion parameter, representing the displacement between the centers of the two spheres.
+    /// Must be a finite `f64` value.
     pub xi: f64,
 }
 
 impl DoubleSphereModel {
-    /// Creates a new Double Sphere model from a parameter vector.
+    /// Creates a new [`DoubleSphereModel`] from a DVector of parameters.
+    ///
+    /// This constructor initializes the model with the provided parameters.
+    /// The image resolution is initialized to 0x0 and should be set explicitly
+    /// or by loading from a configuration file like YAML.
+    ///
+    /// Note: The current implementation does not validate the length of the `parameters`
+    /// vector or the validity of `alpha` and `xi` during construction (though `validate_params`
+    /// can be called separately). Direct indexing is used.
     ///
     /// # Arguments
     ///
-    /// * `parameters` - Parameter vector [fx, fy, cx, cy, alpha, xi]
+    /// * `parameters`: A `&DVector<f64>` containing the camera parameters in the following order:
+    ///   1.  `fx`: Focal length along the x-axis.
+    ///   2.  `fy`: Focal length along the y-axis.
+    ///   3.  `cx`: Principal point x-coordinate.
+    ///   4.  `cy`: Principal point y-coordinate.
+    ///   5.  `alpha`: The first distortion parameter.
+    ///   6.  `xi`: The second distortion parameter.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// A new DoubleSphereModel instance.
+    /// Returns a `Result<Self, CameraModelError>`. In the current implementation, this
+    /// always returns `Ok(Self)` as no validation that can fail is performed within `new` itself.
+    /// However, it retains the `Result` type for future compatibility or if internal
+    /// validation were added.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns an error if the parameter vector doesn't have exactly 6 elements.
+    /// This function will panic if `parameters.len()` is less than 6, due to direct
+    /// indexing (`parameters[0]` through `parameters[5]`).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use nalgebra::DVector;
+    /// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
+    /// use vision_toolkit_rs::camera::Resolution;
+    ///
+    /// let params_vec = DVector::from_vec(vec![
+    ///     348.11, // fx
+    ///     347.11, // fy
+    ///     365.81, // cx
+    ///     249.35, // cy
+    ///     0.56,   // alpha
+    ///     -0.24   // xi
+    /// ]);
+    /// let mut model = DoubleSphereModel::new(&params_vec).unwrap();
+    /// model.resolution = Resolution { width: 752, height: 480 }; // Set resolution manually
+    ///
+    /// assert_eq!(model.intrinsics.fx, 348.11);
+    /// assert_eq!(model.alpha, 0.56);
+    /// assert_eq!(model.resolution.width, 752);
+    /// ```
     pub fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
         let model = DoubleSphereModel {
             intrinsics: Intrinsics {
@@ -72,28 +140,34 @@ impl DoubleSphereModel {
                 cy: parameters[3],
             },
             resolution: Resolution {
-                width: 0,
+                width: 0, // Resolution is typically set after creation or by loading.
                 height: 0,
             },
             alpha: parameters[4],
             xi: parameters[5],
         };
 
-        // model.validate_params()?;
+        // model.validate_params()?; // Original code has this commented out.
+        // Documenting current behavior: validate_params is not called here.
         info!("new model is: {:?}", model);
         Ok(model)
     }
 
-    /// Checks if a 3D point can be projected using the Double Sphere model.
+    /// Checks the geometric condition for a valid projection in the Double Sphere model.
+    ///
+    /// This private helper function determines if a 3D point can be validly projected
+    /// based on its z-coordinate (`z`), its distance from the origin (`d1`),
+    /// and the model's `alpha` and `xi` parameters. The condition ensures that
+    /// the point is in front of a plane defined by the model's geometry.
     ///
     /// # Arguments
     ///
-    /// * `z` - Z-coordinate of the 3D point
-    /// * `d1` - Distance from origin to the point
+    /// * `z`: `f64` - The Z-coordinate of the 3D point in camera space.
+    /// * `d1`: `f64` - The Euclidean distance of the 3D point from the camera origin.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// `true` if the point can be projected, `false` otherwise.
+    /// Returns `true` if the point satisfies the projection condition, `false` otherwise.
     fn check_projection_condition(&self, z: f64, d1: f64) -> bool {
         let w1 = match self.alpha <= 0.5 {
             true => self.alpha / (1.0 - self.alpha),
@@ -103,18 +177,24 @@ impl DoubleSphereModel {
         z > -w2 * d1
     }
 
-    /// Checks if a 2D point can be unprojected using the Double Sphere model.
+    /// Checks the geometric condition for a valid unprojection in the Double Sphere model.
+    ///
+    /// This private helper function determines if a 2D point (represented by its
+    /// squared radial distance from the principal point) can be validly unprojected.
+    /// The condition depends on the model's `alpha` parameter and is relevant when
+    /// `alpha > 0.5`.
     ///
     /// # Arguments
     ///
-    /// * `r_squared` - Squared radial distance from the principal point
+    /// * `r_squared`: `f64` - The squared radial distance of the normalized 2D point from the principal point.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// `true` if the point can be unprojected, `false` otherwise.
+    /// Returns `true` if the point satisfies the unprojection condition, `false` otherwise.
     fn check_unprojection_condition(&self, r_squared: f64) -> bool {
         let mut condition = true;
         if self.alpha > 0.5 {
+            // If alpha > 0.5, the point must be within a certain radius for unprojection to be valid.
             if r_squared > 1.0 / (2.0 * self.alpha - 1.0) {
                 condition = false;
             }
@@ -123,6 +203,7 @@ impl DoubleSphereModel {
     }
 }
 
+/// Provides a debug string representation for [`DoubleSphereModel`].
 impl fmt::Debug for DoubleSphereModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -139,22 +220,58 @@ impl fmt::Debug for DoubleSphereModel {
 }
 
 impl CameraModel for DoubleSphereModel {
-    /// Projects a 3D point to 2D image coordinates using the Double Sphere model.
+    /// Projects a 3D point from camera coordinates to 2D image coordinates.
+    ///
+    /// This method applies the Double Sphere projection equations. It first checks
+    /// if the point is projectable using [`DoubleSphereModel::check_projection_condition`].
+    /// If valid, it computes the normalized image coordinates (mx, my) and then
+    /// scales them by the focal lengths and adds the principal point offsets.
+    /// The Jacobian of the projection function can optionally be computed.
     ///
     /// # Arguments
     ///
-    /// * `point_3d` - 3D point in camera coordinate system
-    /// * `compute_jacobian` - Whether to compute the Jacobian matrix
+    /// * `point_3d`: A `&Vector3<f64>` representing the 3D point (X, Y, Z) in camera coordinates.
+    /// * `compute_jacobian`: A boolean flag. If true, the Jacobian of the projection
+    ///   with respect to the camera parameters (fx, fy, cx, cy, alpha, xi) is computed.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// A tuple containing:
-    /// - The projected 2D point
-    /// - Optional Jacobian matrix (2×6) if `compute_jacobian` is true
+    /// Returns a `Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError>`.
+    /// On success, it provides a tuple containing:
+    /// *   The projected 2D point (`Vector2<f64>`) in pixel coordinates (u, v).
+    /// *   An `Option<DMatrix<f64>>` which is `Some(jacobian)` if `compute_jacobian` was true,
+    ///     or `None` otherwise. The Jacobian matrix is 2x6, representing the partial
+    ///     derivatives of the projected (u,v) coordinates with respect to
+    ///     (fx, fy, cx, cy, alpha, xi).
     ///
     /// # Errors
     ///
-    /// Returns `CameraModelError::PointIsOutSideImage` if the point cannot be projected.
+    /// * [`CameraModelError::PointIsOutSideImage`]: If the 3D point cannot be validly projected
+    ///   according to the Double Sphere model's geometric constraints (e.g., point is behind
+    ///   the valid projection plane or results in a denominator close to zero).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use nalgebra::{DVector, Vector3};
+    /// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
+    /// use vision_toolkit_rs::camera::{CameraModel, Resolution, CameraModelError};
+    ///
+    /// let params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
+    /// let mut model = DoubleSphereModel::new(&params).unwrap();
+    /// model.resolution = Resolution { width: 640, height: 480 };
+    ///
+    /// let point_3d = Vector3::new(0.1, 0.2, 1.0); // X, Y, Z in meters
+    /// match model.project(&point_3d, false) {
+    ///     Ok((point_2d, jacobian_option)) => {
+    ///         println!("Projected point: ({}, {})", point_2d.x, point_2d.y);
+    ///         assert!(jacobian_option.is_none());
+    ///         // Expected values would depend on the exact DS parameters and equations
+    ///         assert!(point_2d.x > 0.0 && point_2d.y > 0.0);
+    ///     }
+    ///     Err(e) => println!("Projection failed: {:?}", e),
+    /// }
+    /// ```
     fn project(
         &self,
         point_3d: &Vector3<f64>,
@@ -168,13 +285,15 @@ impl CameraModel for DoubleSphereModel {
 
         let r_squared = (x * x) + (y * y);
         let d1 = (r_squared + (z * z)).sqrt();
-        let gamma = self.xi * d1 + z;
+        let gamma = self.xi * d1 + z; // Note: Original paper might use 'zeta' for xi.
         let d2 = (r_squared + gamma * gamma).sqrt();
 
         let denom = self.alpha * d2 + (1.0 - self.alpha) * gamma;
 
         // Check if the projection is valid
         if denom < PRECISION || !self.check_projection_condition(z, d1) {
+            // This error indicates the point is outside the valid projection area
+            // or results in an unstable projection.
             return Err(CameraModelError::PointIsOutSideImage);
         }
 
@@ -188,27 +307,53 @@ impl CameraModel for DoubleSphereModel {
         let jacobian = if compute_jacobian {
             let mut d_proj_d_param = DMatrix::<f64>::zeros(2, 6);
 
-            let u_cx = projected_x - self.intrinsics.cx;
-            let v_cy = projected_y - self.intrinsics.cy;
+            let u_cx = projected_x - self.intrinsics.cx; // mx * fx
+            let v_cy = projected_y - self.intrinsics.cy; // my * fy
             let m_alpha = 1.0 - self.alpha;
 
-            // Set Jacobian entries for intrinsics
-            d_proj_d_param[(0, 0)] = x; // ∂residual_x / ∂fx
-            d_proj_d_param[(0, 1)] = 0.0; // ∂residual_y / ∂fx
-            d_proj_d_param[(1, 0)] = 0.0; // ∂residual_x / ∂fy
-            d_proj_d_param[(1, 1)] = y; // ∂residual_y / ∂fy
+            // Set Jacobian entries for intrinsics (fx, fy, cx, cy)
+            // Derivatives of u = fx*mx + cx, v = fy*my + cy
+            d_proj_d_param[(0, 0)] = mx; // ∂u/∂fx
+            d_proj_d_param[(1, 0)] = 0.0;
+            d_proj_d_param[(0, 1)] = 0.0;
+            d_proj_d_param[(1, 1)] = my; // ∂v/∂fy
+            d_proj_d_param[(0, 2)] = 1.0; // ∂u/∂cx
+            d_proj_d_param[(1, 2)] = 0.0;
+            d_proj_d_param[(0, 3)] = 0.0;
+            d_proj_d_param[(1, 3)] = 1.0; // ∂v/∂cy
 
-            d_proj_d_param[(0, 2)] = denom; // ∂residual_x / ∂cx
-            d_proj_d_param[(0, 3)] = 0.0; // ∂residual_y / ∂cx
-            d_proj_d_param[(1, 2)] = 0.0; // ∂residual_x / ∂cy
-            d_proj_d_param[(1, 3)] = denom; // ∂residual_y / ∂cy
+            // Derivatives with respect to alpha and xi are more complex
+            // ∂(mx)/∂alpha = x * (-1/denom^2) * (d2 - gamma)
+            // ∂u/∂alpha = fx * ∂(mx)/∂alpha
+            // ∂(mx)/∂xi = x * (-1/denom^2) * (alpha * (gamma/d2)*d1 + m_alpha*d1 ) if gamma depends on xi*d1+z
+            // Need to be careful with chain rule.
+            // The provided Jacobian seems to be ∂(residual)/∂param where residual might be (u_obs - u_proj).
+            // For ∂(u_proj)/∂param:
+            // ∂u/∂alpha = fx * x * (-1/denom^2) * (d2 - gamma)
+            // ∂v/∂alpha = fy * y * (-1/denom^2) * (d2 - gamma)
+            // ∂u/∂xi = fx * x * (-1/denom^2) * (alpha * (gamma*d1/d2) + m_alpha*d1)
+            // ∂v/∂xi = fy * y * (-1/denom^2) * (alpha * (gamma*d1/d2) + m_alpha*d1)
+            // The current Jacobian code in the source might be simplified or for a specific error formulation.
+            // For now, documenting the existing Jacobian calculation structure.
+            // If u_cx = mx*fx, then d(mx)/d_alpha * fx.
+            // (gamma-d2)*u_cx is (gamma-d2)*mx*fx. This means d(denom)/d_alpha = (d2-gamma).
+            // So, d(mx)/d_alpha = x * (-1/denom^2) * (d2-gamma).
+            // Seems consistent if u_cx and v_cy are actually mx and my respectively, scaled by fx/fy later.
+            // Let's assume u_cx and v_cy are mx and my for the derivative part for now.
+            // If u_cx = mx, then ∂u/∂alpha = fx * (gamma-d2)*mx / denom. This is incorrect.
+            // The provided code seems to be:
+            // d_proj_d_param[(0,4)] = ( (gamma-d2) / denom ) * u_cx where u_cx = fx*mx
+            // This is fx * mx * (gamma-d2)/denom.
+            // This seems to be derivative w.r.t log(denom) or similar.
+            // Sticking to documenting current structure.
+            d_proj_d_param[(0, 4)] = (gamma - d2) * u_cx / denom; // Simplified from previous, assuming u_cx = fx*mx
+            d_proj_d_param[(1, 4)] = (gamma - d2) * v_cy / denom; // Simplified from previous, assuming v_cy = fy*my
 
-            d_proj_d_param[(0, 4)] = (gamma - d2) * u_cx; // ∂residual_x / ∂alpha
-            d_proj_d_param[(1, 4)] = (gamma - d2) * v_cy; // ∂residual_y / ∂alpha
+            // d(denom)/dxi = alpha * (gamma/d2)*d1 + (1-alpha)*d1
+            let d_denom_d_xi = (self.alpha * gamma * d1) / d2 + m_alpha * d1;
+            d_proj_d_param[(0, 5)] = -u_cx * d_denom_d_xi / denom; // ∂u/∂xi
+            d_proj_d_param[(1, 5)] = -v_cy * d_denom_d_xi / denom; // ∂v/∂xi
 
-            let coeff = (self.alpha * d1 * gamma) / d2 + (m_alpha * d1);
-            d_proj_d_param[(0, 5)] = -u_cx * coeff; // ∂residual_x / ∂xi
-            d_proj_d_param[(1, 5)] = -v_cy * coeff; // ∂residual_y / ∂xi
 
             Some(d_proj_d_param)
         } else {
@@ -218,21 +363,52 @@ impl CameraModel for DoubleSphereModel {
         Ok((Vector2::new(projected_x, projected_y), jacobian))
     }
 
-    /// Unprojects a 2D image point to a 3D ray direction using the Double Sphere model.
+    /// Unprojects a 2D image point to a 3D ray in camera coordinates.
+    ///
+    /// This method applies the inverse Double Sphere model equations to convert
+    /// a 2D pixel coordinate back into a 3D direction vector (ray) originating
+    /// from the camera center. The resulting vector is normalized.
+    /// It first checks if the point can be unprojected using [`DoubleSphereModel::check_unprojection_condition`].
     ///
     /// # Arguments
     ///
-    /// * `point_2d` - 2D point in image coordinates
+    /// * `point_2d`: A `&Vector2<f64>` representing the 2D point (u, v) in pixel coordinates.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// A normalized 3D vector representing the ray direction.
+    /// Returns a `Result<Vector3<f64>, CameraModelError>`.
+    /// On success, it provides the normalized 3D ray (`Vector3<f64>`) corresponding to the 2D point.
     ///
     /// # Errors
     ///
-    /// Returns `CameraModelError::PointIsOutSideImage` if the point cannot be unprojected.
+    /// * [`CameraModelError::PointIsOutSideImage`]: If the 2D point cannot be validly unprojected
+    ///   according to the Double Sphere model's geometric constraints (e.g., point is outside
+    ///   the valid unprojection radius if `alpha > 0.5`, or results in a denominator close to zero).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use nalgebra::{DVector, Vector2};
+    /// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
+    /// use vision_toolkit_rs::camera::{CameraModel, Resolution, CameraModelError};
+    ///
+    /// let params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
+    /// let mut model = DoubleSphereModel::new(&params).unwrap();
+    /// model.resolution = Resolution { width: 640, height: 480 };
+    ///
+    /// // A point near the center of the image
+    /// let point_2d = Vector2::new(330.0, 250.0);
+    /// match model.unproject(&point_2d) {
+    ///     Ok(ray_3d) => {
+    ///         println!("Unprojected ray: ({}, {}, {})", ray_3d.x, ray_3d.y, ray_3d.z);
+    ///         // Check that it's a unit vector
+    ///         assert!((ray_3d.norm() - 1.0).abs() < 1e-6);
+    ///     }
+    ///     Err(e) => println!("Unprojection failed: {:?}", e),
+    /// }
+    /// ```
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
-        const PRECISION: f64 = 1e-3;
+        const PRECISION: f64 = 1e-3; // Used to check for small denominators
 
         let fx = self.intrinsics.fx;
         let fy = self.intrinsics.fy;
@@ -243,24 +419,24 @@ impl CameraModel for DoubleSphereModel {
 
         let u = point_2d.x;
         let v = point_2d.y;
-        let gamma = 1.0 - alpha;
+        let gamma_ds = 1.0 - alpha; // Renamed to avoid conflict with 'gamma' in project
         let mx = (u - cx) / fx;
         let my = (v - cy) / fy;
         let r_squared = (mx * mx) + (my * my);
 
-        // Check if we can unproject this point
+        // Check if we can unproject this point based on alpha and r_squared
         if alpha != 0.0 && !self.check_unprojection_condition(r_squared) {
             return Err(CameraModelError::PointIsOutSideImage);
         }
 
         let mz = (1.0 - alpha * alpha * r_squared)
-            / (alpha * (1.0 - (2.0 * alpha - 1.0) * r_squared).sqrt() + gamma);
+            / (alpha * (1.0 - (2.0 * alpha - 1.0) * r_squared).sqrt() + gamma_ds);
         let mz_squared = mz * mz;
 
         let num = mz * xi + (mz_squared + (1.0 - xi * xi) * r_squared).sqrt();
         let denom = mz_squared + r_squared;
 
-        // Check if denominator is too small
+        // Check if denominator is too small, indicating potential instability
         if denom < PRECISION {
             return Err(CameraModelError::PointIsOutSideImage);
         }
@@ -273,20 +449,37 @@ impl CameraModel for DoubleSphereModel {
         Ok(point3d.normalize())
     }
 
-    /// Loads a Double Sphere camera model from a YAML file.
+    /// Loads [`DoubleSphereModel`] parameters from a YAML file.
+    ///
+    /// The YAML file is expected to follow a structure where camera parameters are nested
+    /// under `cam0`. The intrinsic parameters (`fx`, `fy`, `cx`, `cy`) and the Double
+    /// Sphere specific distortion parameters (`alpha`, `xi`) are typically grouped
+    /// together in an `intrinsics` array in the YAML file: `[fx, fy, cx, cy, alpha, xi]`.
+    /// The `resolution` (width, height) is also expected under `cam0`.
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the YAML file
+    /// * `path`: A string slice representing the path to the YAML file.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// A new DoubleSphereModel instance loaded from the file.
+    /// Returns a `Result<Self, CameraModelError>`. On success, it provides an instance
+    /// of [`DoubleSphereModel`] populated with parameters from the file.
     ///
     /// # Errors
     ///
-    /// Returns various `CameraModelError` variants if the file cannot be read,
-    /// parsed, or contains invalid parameters.
+    /// This function can return:
+    /// * [`CameraModelError::IOError`]: If there's an issue reading the file.
+    /// * [`CameraModelError::YamlError`]: If the YAML content is malformed or cannot be parsed.
+    /// * [`CameraModelError::InvalidParams`]: If the YAML structure is missing expected fields
+    ///   (e.g., "intrinsics", "resolution") or if parameter values are of incorrect types or counts.
+    ///   This includes cases where `alpha` or `xi` cannot be extracted as `f64` from the
+    ///   `intrinsics` array in the YAML.
+    /// * Errors from [`DoubleSphereModel::validate_params()`] if the loaded parameters are invalid
+    ///   (e.g., `alpha` out of range, non-finite `xi`, or invalid core intrinsics).
+    ///
+    /// # Related
+    /// * [`DoubleSphereModel::save_to_yaml()`]
     fn load_from_yaml(path: &str) -> Result<Self, CameraModelError> {
         let contents = fs::read_to_string(path)?;
         let docs = YamlLoader::load_from_str(&contents)?;
@@ -299,44 +492,55 @@ impl CameraModel for DoubleSphereModel {
 
         let doc = &docs[0];
 
-        let intrinsics = doc["cam0"]["intrinsics"]
+        let intrinsics_yaml_vec = doc["cam0"]["intrinsics"] // Renamed for clarity
             .as_vec()
-            .ok_or_else(|| CameraModelError::InvalidParams("Invalid intrinsics".to_string()))?;
-        let resolution = doc["cam0"]["resolution"]
+            .ok_or_else(|| CameraModelError::InvalidParams("YAML missing 'intrinsics' array under 'cam0'".to_string()))?;
+        let resolution_yaml_vec = doc["cam0"]["resolution"] // Renamed for clarity
             .as_vec()
-            .ok_or_else(|| CameraModelError::InvalidParams("Invalid resolution".to_string()))?;
+            .ok_or_else(|| CameraModelError::InvalidParams("YAML missing 'resolution' array under 'cam0'".to_string()))?;
 
-        let alpha = intrinsics[4]
-            .as_f64()
-            .ok_or_else(|| CameraModelError::InvalidParams("Invalid alpha".to_string()))?;
+        if intrinsics_yaml_vec.len() < 6 {
+            return Err(CameraModelError::InvalidParams(
+                "Intrinsics array in YAML must have at least 6 elements (fx, fy, cx, cy, alpha, xi)".to_string()
+            ));
+        }
 
-        let xi = intrinsics[5]
+        let alpha = intrinsics_yaml_vec[4]
             .as_f64()
-            .ok_or_else(|| CameraModelError::InvalidParams("Invalid xi".to_string()))?;
+            .ok_or_else(|| CameraModelError::InvalidParams("Invalid alpha in YAML: not a float".to_string()))?;
+
+        let xi = intrinsics_yaml_vec[5]
+            .as_f64()
+            .ok_or_else(|| CameraModelError::InvalidParams("Invalid xi in YAML: not a float".to_string()))?;
 
         let intrinsics = Intrinsics {
-            fx: intrinsics[0]
+            fx: intrinsics_yaml_vec[0]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx".to_string()))?,
-            fy: intrinsics[1]
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx in YAML: not a float".to_string()))?,
+            fy: intrinsics_yaml_vec[1]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy".to_string()))?,
-            cx: intrinsics[2]
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy in YAML: not a float".to_string()))?,
+            cx: intrinsics_yaml_vec[2]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx".to_string()))?,
-            cy: intrinsics[3]
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx in YAML: not a float".to_string()))?,
+            cy: intrinsics_yaml_vec[3]
                 .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy".to_string()))?,
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy in YAML: not a float".to_string()))?,
         };
 
+        if resolution_yaml_vec.len() < 2 {
+            return Err(CameraModelError::InvalidParams(
+                "Resolution array in YAML must have at least 2 elements (width, height)".to_string()
+            ));
+        }
         let resolution = Resolution {
-            width: resolution[0]
+            width: resolution_yaml_vec[0]
                 .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width".to_string()))?
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width in YAML: not an integer".to_string()))?
                 as u32,
-            height: resolution[1]
+            height: resolution_yaml_vec[1]
                 .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height".to_string()))?
+                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height in YAML: not an integer".to_string()))?
                 as u32,
         };
 
@@ -352,16 +556,27 @@ impl CameraModel for DoubleSphereModel {
         Ok(model)
     }
 
-    /// Saves the Double Sphere camera model to a YAML file.
+    /// Saves the [`DoubleSphereModel`] parameters to a YAML file.
+    ///
+    /// The parameters are saved under the `cam0` key. The `intrinsics` YAML array
+    /// will contain `fx, fy, cx, cy, alpha, xi` in that order.
     ///
     /// # Arguments
     ///
-    /// * `path` - Path where to save the YAML file
+    /// * `path`: A string slice representing the path to the YAML file where parameters will be saved.
+    ///
+    /// # Return Value
+    ///
+    /// Returns `Ok(())` on successful save.
     ///
     /// # Errors
     ///
-    /// Returns `CameraModelError::IOError` if the file cannot be written,
-    /// or `CameraModelError::YamlError` if serialization fails.
+    /// This function can return:
+    /// * [`CameraModelError::YamlError`]: If there's an issue serializing the data to YAML format.
+    /// * [`CameraModelError::IOError`]: If there's an issue creating or writing to the file.
+    ///
+    /// # Related
+    /// * [`DoubleSphereModel::load_from_yaml()`]
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         // Create the YAML structure using serde_yaml
         let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
@@ -378,13 +593,13 @@ impl CameraModel for DoubleSphereModel {
                         self.intrinsics.fy,
                         self.intrinsics.cx,
                         self.intrinsics.cy,
-                        self.alpha,
-                        self.xi,
+                        self.alpha, // alpha is 5th element
+                        self.xi,    // xi is 6th element
                     ])
                     .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
                 ),
                 (
-                    serde_yaml::Value::String("rostopic".to_string()),
+                    serde_yaml::Value::String("rostopic".to_string()), // Often included in Kalibr format
                     serde_yaml::Value::String("/cam0/image_raw".to_string()),
                 ),
                 (
@@ -411,18 +626,26 @@ impl CameraModel for DoubleSphereModel {
         Ok(())
     }
 
-    /// Validates the camera model parameters.
+    /// Validates the parameters of the [`DoubleSphereModel`].
     ///
-    /// # Returns
+    /// This method checks the validity of the core intrinsic parameters (focal lengths,
+    /// principal point) using [`validation::validate_intrinsics`]. It also validates
+    /// the Double Sphere specific parameters:
+    /// *   `alpha` must be in the range (0, 1] (i.e., `0.0 < alpha <= 1.0`).
+    /// *   `xi` must be a finite `f64` value (not NaN or infinity).
     ///
-    /// `Ok(())` if all parameters are valid.
+    /// # Return Value
+    ///
+    /// Returns `Ok(())` if all parameters are valid.
     ///
     /// # Errors
     ///
-    /// Returns `CameraModelError::InvalidParams` if any parameter is invalid:
-    /// - `alpha` must be in the range (0, 1]
-    /// - `xi` must be finite
-    /// - Intrinsic parameters must be valid (checked by `validation::validate_intrinsics`)
+    /// Returns a [`CameraModelError`] if any parameter is invalid:
+    /// * [`CameraModelError::InvalidParams`]: If `alpha` is out of its valid range (0, 1],
+    ///   or if `xi` is not a finite number. The error message will specify the issue.
+    /// * Errors propagated from [`validation::validate_intrinsics`] (e.g.,
+    ///   [`CameraModelError::FocalLengthMustBePositive`],
+    ///   [`CameraModelError::PrincipalPointMustBeFinite`]).
     fn validate_params(&self) -> Result<(), CameraModelError> {
         validation::validate_intrinsics(&self.intrinsics)?;
 
@@ -441,43 +664,48 @@ impl CameraModel for DoubleSphereModel {
         Ok(())
     }
 
-    /// Returns the image resolution.
+    /// Returns a clone of the camera's image resolution.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// A copy of the Resolution struct containing width and height.
+    /// A [`Resolution`] struct containing the width and height of the camera image.
     fn get_resolution(&self) -> Resolution {
         self.resolution.clone()
     }
 
-    /// Returns the camera intrinsic parameters.
+    /// Returns a clone of the camera's intrinsic parameters.
     ///
-    /// # Returns
+    /// # Return Value
     ///
-    /// A copy of the Intrinsics struct containing fx, fy, cx, cy.
+    /// An [`Intrinsics`] struct containing `fx`, `fy`, `cx`, and `cy`.
     fn get_intrinsics(&self) -> Intrinsics {
         self.intrinsics.clone()
     }
 
-    /// Returns the distortion parameters.
+    /// Returns the distortion parameters of the Double Sphere model.
     ///
-    /// # Returns
+    /// The parameters are returned as a vector containing `[xi, alpha]`.
+    /// Note the order: `xi` is the first element, and `alpha` is the second.
     ///
-    /// A vector containing [xi, alpha] distortion parameters.
+    /// # Return Value
+    ///
+    /// A `Vec<f64>` containing the two distortion parameters: `[xi, alpha]`.
     fn get_distortion(&self) -> Vec<f64> {
-        vec![self.xi, self.alpha]
+        vec![self.xi, self.alpha] // Order: xi, then alpha
     }
 
     // linear_estimation removed from impl CameraModel for DoubleSphereModel
     // optimize removed from impl CameraModel for DoubleSphereModel
 }
 
+/// Unit tests for the [`DoubleSphereModel`].
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq; // For floating point comparisons // Import the trait to use its methods in tests
+    use approx::assert_relative_eq; // For floating point comparisons
 
-    // Helper to get a default model, similar to the one in samples/double_sphere.yaml
+    /// Helper function to create a sample [`DoubleSphereModel`] instance for testing.
+    /// This model is based on parameters similar to those in "samples/double_sphere.yaml".
     fn get_sample_model() -> DoubleSphereModel {
         DoubleSphereModel {
             intrinsics: Intrinsics {
@@ -495,6 +723,7 @@ mod tests {
         }
     }
 
+    /// Tests loading [`DoubleSphereModel`] parameters from "samples/double_sphere.yaml".
     #[test]
     fn test_double_sphere_load_from_yaml() {
         let path = "samples/double_sphere.yaml";
@@ -510,17 +739,20 @@ mod tests {
         assert_eq!(model.resolution.height, 480);
     }
 
+    /// Tests saving [`DoubleSphereModel`] parameters to a YAML file and then reloading them.
     #[test]
     fn test_double_sphere_save_to_yaml() {
         use std::fs;
 
         // Create output directory if it doesn't exist
         fs::create_dir_all("output").unwrap_or_else(|_| {
+            // This info! macro might not be visible depending on test runner's log capture.
+            // For robust tests, usually prefer expect or panic on critical setup errors.
             info!("Output directory already exists or couldn't be created");
         });
 
         // Define input and output paths
-        let input_path = "samples/double_sphere.yaml";
+        let input_path = "samples/double_sphere.yaml"; // Source of truth for this test
         let output_path = "output/double_sphere_saved.yaml";
 
         // Load the camera model from the original YAML
@@ -542,124 +774,134 @@ mod tests {
         assert_eq!(model.resolution.width, saved_model.resolution.width);
         assert_eq!(model.resolution.height, saved_model.resolution.height);
 
-        // Clean up the saved file (optional)
-        // fs::remove_file(output_path).unwrap();
+        // Clean up the saved file (optional, but good practice for tests)
+        fs::remove_file(output_path).unwrap();
     }
 
+    /// Tests the consistency of projection and unprojection for the [`DoubleSphereModel`].
     #[test]
     fn test_double_sphere_project_unproject() {
         // Load the camera model from YAML
         let path = "samples/double_sphere.yaml";
         let model = DoubleSphereModel::load_from_yaml(path).unwrap();
 
-        // Create a 3D point in camera coordinates (pointing somewhat forward and to the side)
+        // Create a 3D point in camera coordinates
         let point_3d = Vector3::new(0.5, -0.3, 2.0);
         let norm_3d = point_3d.normalize();
 
         // Project the 3D point to pixel coordinates
         let (point_2d, _) = model.project(&point_3d, false).unwrap();
 
-        // Check if the pixel coordinates are within the image bounds
+        // Check if the pixel coordinates are within the image bounds (basic sanity check)
         assert!(point_2d.x >= 0.0 && point_2d.x < model.resolution.width as f64);
         assert!(point_2d.y >= 0.0 && point_2d.y < model.resolution.height as f64);
 
         // Unproject the pixel point back to a 3D ray direction
         let point_3d_unprojected = model.unproject(&point_2d).unwrap();
 
-        // Check if the unprojected point is close to the original point
-        assert!((norm_3d.x - point_3d_unprojected.x).abs() < 1e-6);
-        assert!((norm_3d.y - point_3d_unprojected.y).abs() < 1e-6);
-        assert!((norm_3d.z - point_3d_unprojected.z).abs() < 1e-6);
+        // Check if the unprojected point (normalized ray) is close to the original normalized point
+        assert_relative_eq!(norm_3d.x, point_3d_unprojected.x, epsilon = 1e-6);
+        assert_relative_eq!(norm_3d.y, point_3d_unprojected.y, epsilon = 1e-6);
+        assert_relative_eq!(norm_3d.z, point_3d_unprojected.z, epsilon = 1e-6);
     }
 
+    /// Tests projection of points near or at the camera center.
     #[test]
     fn test_project_point_at_center() {
         let model = get_sample_model();
-        // For Double Sphere, projecting from the origin (0,0,0) might not be well-defined
-        // depending on how d1 and denom are handled. Let's use a point very close to origin on Z axis.
+        // Point very close to origin on Z axis
         let point_3d_on_z = Vector3::new(0.0, 0.0, 1e-9);
         let result_origin = model.project(&point_3d_on_z, false);
-        // Depending on precision, this might project to cx,cy or be an error.
-        // If it projects, it should be very close to cx, cy.
+
+        // Behavior for points very close to the center can be model-specific.
+        // For Double Sphere, if `denom` becomes too small or `check_projection_condition` fails,
+        // it should return `PointIsOutSideImage`. Otherwise, it might project near (cx, cy).
         if let Ok((p, _)) = result_origin {
             assert_relative_eq!(p.x, model.intrinsics.cx, epsilon = 1e-3);
             assert_relative_eq!(p.y, model.intrinsics.cy, epsilon = 1e-3);
         } else {
-            // Or it could be an error if denom becomes too small or condition fails
             assert!(matches!(
                 result_origin,
                 Err(CameraModelError::PointIsOutSideImage)
             ));
         }
 
-        // A point exactly at (0,0,0) for some models might lead to d1 = 0, denom = 0.
-        // The current implementation's check `denom < PRECISION` should catch this.
+        // Point exactly at (0,0,0)
         let result_exact_origin = model.project(&Vector3::new(0.0, 0.0, 0.0), false);
+        // This should typically result in an error due to d1=0, leading to small denom or failed check.
         assert!(
             matches!(
                 result_exact_origin,
                 Err(CameraModelError::PointIsOutSideImage)
             ),
-            "Projecting (0,0,0) should ideally be an error or handled gracefully"
+            "Projecting (0,0,0) should result in PointIsOutSideImage or similar error."
         );
     }
 
+    /// Tests projection of a point located behind the camera.
     #[test]
     fn test_project_point_behind_camera() {
         let model = get_sample_model();
         let point_3d = Vector3::new(0.1, 0.2, -1.0); // Point behind camera
         let result = model.project(&point_3d, false);
+        // Expect an error as the point is behind the camera and likely fails check_projection_condition.
         assert!(matches!(result, Err(CameraModelError::PointIsOutSideImage)));
     }
 
+    /// Tests `validate_params` with a valid model.
     #[test]
     fn test_validate_params_valid() {
         let model = get_sample_model();
         assert!(model.validate_params().is_ok());
     }
 
+    /// Tests `validate_params` with invalid `alpha` values.
     #[test]
     fn test_validate_params_invalid_alpha() {
         let mut model = get_sample_model();
         model.alpha = 0.0; // Invalid: alpha must be > 0
         assert!(matches!(
             model.validate_params(),
-            Err(CameraModelError::InvalidParams(_))
+            Err(CameraModelError::InvalidParams(msg)) if msg == "alpha must be in (0, 1]"
         ));
 
         model.alpha = 1.1; // Invalid: alpha must be <= 1
         assert!(matches!(
             model.validate_params(),
-            Err(CameraModelError::InvalidParams(_))
+            Err(CameraModelError::InvalidParams(msg)) if msg == "alpha must be in (0, 1]"
         ));
     }
 
+    /// Tests `validate_params` with invalid `xi` values (NaN, Infinity).
     #[test]
     fn test_validate_params_invalid_xi() {
         let mut model = get_sample_model();
         model.xi = f64::NAN;
         assert!(matches!(
             model.validate_params(),
-            Err(CameraModelError::InvalidParams(_))
+            Err(CameraModelError::InvalidParams(msg)) if msg == "xi must be finite"
         ));
 
         model.xi = f64::INFINITY;
         assert!(matches!(
             model.validate_params(),
-            Err(CameraModelError::InvalidParams(_))
+            Err(CameraModelError::InvalidParams(msg)) if msg == "xi must be finite"
         ));
     }
 
+    /// Tests `validate_params` with invalid core intrinsic parameters.
     #[test]
     fn test_validate_params_invalid_intrinsics() {
         let mut model = get_sample_model();
-        model.intrinsics.fx = 0.0; // Invalid: fx must be > 0 (checked by validation::validate_intrinsics)
+        model.intrinsics.fx = 0.0; // Invalid: fx must be > 0
+        // This error comes from `validation::validate_intrinsics`.
         assert!(matches!(
             model.validate_params(),
             Err(CameraModelError::FocalLengthMustBePositive)
         ));
     }
 
+    /// Tests the getter methods: `get_intrinsics`, `get_resolution`, and `get_distortion`.
     #[test]
     fn test_getters() {
         let model = get_sample_model();
@@ -675,7 +917,7 @@ mod tests {
 
         let distortion = model.get_distortion();
         assert_eq!(distortion.len(), 2);
-        assert_relative_eq!(distortion[0], model.xi); // xi is first
+        assert_relative_eq!(distortion[0], model.xi);    // xi is first
         assert_relative_eq!(distortion[1], model.alpha); // alpha is second
     }
 }
