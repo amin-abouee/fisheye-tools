@@ -216,6 +216,18 @@ impl Optimizer for KannalaBrandtOptimizationCost {
         self.model.validate_params()?;
         Ok(())
     }
+
+    fn get_intrinsics(&self) -> crate::camera::Intrinsics {
+        self.model.intrinsics.clone()
+    }
+
+    fn get_resolution(&self) -> crate::camera::Resolution {
+        self.model.resolution.clone()
+    }
+
+    fn get_distortion(&self) -> Vec<f64> {
+        self.model.get_distortion()
+    }
 }
 
 impl Operator for KannalaBrandtOptimizationCost {

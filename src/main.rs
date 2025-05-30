@@ -75,8 +75,8 @@ fn create_output_model(
             let model = DoubleSphereModel {
                 intrinsics: input_intrinsic.clone(),
                 resolution: input_resolution.clone(),
-                alpha: 0.0,
-                xi: 0.0,
+                alpha: 0.5, // Valid initial value in range (0, 1]
+                xi: 0.1,    // Small positive initial value
             };
             let mut cost_model = DoubleSphereOptimizationCost::new(model, points_3d, points_2d);
             cost_model.linear_estimation()?;
@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Input Path: {:?}", cli.input_path);
 
     // Convert PathBuf to &str for loading functions
-    let n = 100 as usize;
+    let n = 500 as usize;
     let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
     let input_model_type = cli.input_model.as_str();
     let input_model = create_input_model(input_model_type, input_path_str)?;
@@ -147,34 +147,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         points_3d,
     )?;
 
-    output_model.optimize(true).unwrap();
+    // Try to optimize and handle errors gracefully
+    match output_model.optimize(true) {
+        Ok(()) => {
+            info!("Optimization completed successfully!");
+        }
+        Err(e) => {
+            error!("Optimization failed: {:?}", e);
+            info!("Continuing with linear estimation results...");
+        }
+    }
 
     info!("Output Model Parameters:");
-    // Attempt to get parameters from the optimizer if it holds a camera model
-    // This part might need adjustment based on how Optimizer trait is implemented
-    // and whether it provides direct access to the underlying model's parameters.
-    // For now, we assume the Optimizer might be a wrapper around a CameraModel
-    // and we'd need a way to access that model. If the Optimizer itself
-    // should have get_intrinsics, get_resolution, get_distortion, then the
-    // Optimizer trait and its implementations would need to be updated.
-
-    // Placeholder: How to get these details from `Box<dyn Optimizer>` depends on its design.
-    // If the optimizer directly wraps a CameraModel and provides access:
-    // if let Some(camera_model) = output_model.get_camera_model() { // Assuming such a method exists
-    //     info!("Intrinsics: {:?}", camera_model.get_intrinsics());
-    //     info!("Resolution: {:?}", camera_model.get_resolution());
-    //     info!("Distortion: {:?}", camera_model.get_distortion());
-    // } else {
-    //     info!("Could not retrieve detailed model parameters from the optimizer.");
-    // }
-
-    // The following lines are commented out as they were in the original code
-    // and their direct application to `output_model` of type `Box<dyn Optimizer>`
-    // is not straightforward without knowing more about the `Optimizer` trait's
-    // capabilities to expose underlying model details.
-    // info!("Intrinsics: {:?}", output_model.get_intrinsics());
-    // info!("Resolution: {:?}", output_model.get_resolution());
-    // info!("Distortion: {:?}", output_model.get_distortion()); // Corrected from Resolution to Distortion
+    info!("Intrinsics: {:?}", output_model.get_intrinsics());
+    info!("Resolution: {:?}", output_model.get_resolution());
+    info!("Distortion: {:?}", output_model.get_distortion());
 
     Ok(())
 }
