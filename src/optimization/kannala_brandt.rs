@@ -25,7 +25,6 @@ impl KannalaBrandtOptimizationCost {
         points3d: Matrix3xX<f64>,
         points2d: Matrix2xX<f64>,
     ) -> Self {
-        assert_eq!(points3d.ncols(), points2d.ncols());
         KannalaBrandtOptimizationCost {
             model,
             points3d,

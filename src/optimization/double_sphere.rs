@@ -212,16 +212,6 @@ impl Residual1 for DoubleSphereFactrsResidual {
                     }
                 }
 
-                // // Log that we're using analytical Jacobian (only for first few calls to avoid spam)
-                // static ANALYTICAL_JACOBIAN_LOG_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                // let count = ANALYTICAL_JACOBIAN_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                // if count < 5 {
-                //     info!("Using analytical Jacobian (call #{}) - residual: [{:.6}, {:.6}]",
-                //           count + 1, analytical_residual.x, analytical_residual.y);
-                // }
-                // info!("Using analytical Jacobian - residual: [{:.6}, {:.6}]",
-                //       analytical_residual.x, analytical_residual.y);
-
                 DiffResult {
                     value: residual_vec,
                     diff: jacobian_factrs,
