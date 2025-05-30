@@ -2,10 +2,10 @@ use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
 use crate::optimization::Optimizer;
 use factrs::{
     assign_symbols,
-    core::{Graph, LevenMarquardt, GaussNewton,  Values, Huber},
+    core::{Graph, LevenMarquardt,  Values, Huber},
     dtype, fac,
     linalg::{Const, ForwardProp, Numeric, VectorX},
-    linear::{CholeskySolver, QRSolver, LUSolver},
+    linear::{QRSolver},
     optimizers::Optimizer as FactrsOptimizer,
     residuals::Residual1,
     variables::VectorVar6,
