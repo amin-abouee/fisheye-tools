@@ -64,7 +64,7 @@ fn create_output_model(
             let model = RadTanModel {
                 intrinsics: input_intrinsic.clone(),
                 resolution: input_resolution.clone(),
-                distortion: [0.0; 5], // Initialize with zero
+                distortions: [0.0; 5], // Initialize with zero
             };
             let mut cost_model = RadTanOptimizationCost::new(model, points_3d, points_2d);
             cost_model.linear_estimation()?;

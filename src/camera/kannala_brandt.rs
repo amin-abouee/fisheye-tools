@@ -15,7 +15,7 @@
 
 use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
-use std::{f64::consts::PI, fs, io::Write};
+use std::{f64::consts::PI, fs, fmt, io::Write};
 use yaml_rust::YamlLoader;
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
@@ -61,7 +61,7 @@ use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resol
 /// //     println!("Loaded model distortions: {:?}", model.get_distortion());
 /// // }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KannalaBrandtModel {
     /// Camera intrinsic parameters: `fx`, `fy`, `cx`, `cy`.
     pub intrinsics: Intrinsics,
@@ -145,6 +145,21 @@ impl KannalaBrandtModel {
         // model.validate_params()?; // Cannot fully validate without resolution
         // Documenting current behavior: validate_params is not called here.
         Ok(model)
+    }
+}
+
+/// Provides a debug string representation for [`KannalaBrandtModel`].
+impl fmt::Debug for KannalaBrandtModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "DoubleSphere [fx: {} fy: {} cx: {} cy: {} distortions: {:?}]",
+            self.intrinsics.fx,
+            self.intrinsics.fy,
+            self.intrinsics.cx,
+            self.intrinsics.cy,
+            self.distortions,
+        )
     }
 }
 

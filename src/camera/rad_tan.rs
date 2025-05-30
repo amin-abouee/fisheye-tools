@@ -9,8 +9,7 @@
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use nalgebra::{DMatrix, DVector, Matrix2, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io::Write;
+use std::{fs, fmt, io::Write};
 use yaml_rust::YamlLoader;
 
 /// Represents a Radial-Tangential (RadTan) camera model.
@@ -44,7 +43,7 @@ use yaml_rust::YamlLoader;
 /// assert_eq!(rad_tan_model.distortion[0], 0.1); // k1
 /// assert_eq!(rad_tan_model.resolution.width, 640);
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RadTanModel {
     /// The intrinsic parameters of the camera, [`Intrinsics`] (fx, fy, cx, cy).
     pub intrinsics: Intrinsics,
@@ -53,7 +52,7 @@ pub struct RadTanModel {
     /// The 5 distortion coefficients: `[k1, k2, p1, p2, k3]`.
     /// * `k1`, `k2`, `k3`: Radial distortion coefficients.
     /// * `p1`, `p2`: Tangential distortion coefficients.
-    pub distortion: [f64; 5], // k1, k2, p1, p2, k3
+    pub distortions: [f64; 5], // k1, k2, p1, p2, k3
 }
 
 impl RadTanModel {
@@ -116,7 +115,7 @@ impl RadTanModel {
                 width: 0,  // Resolution is typically set after creation or by loading.
                 height: 0, // It's not part of the minimal parameter set for `new`.
             },
-            distortion: [
+            distortions: [
                 parameters[4], // k1
                 parameters[5], // k2
                 parameters[6], // p1
@@ -127,6 +126,21 @@ impl RadTanModel {
 
         model.validate_params()?;
         Ok(model)
+    }
+}
+
+/// Provides a debug string representation for [`KannalaBrandtModel`].
+impl fmt::Debug for RadTanModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "RadTanModel [fx: {} fy: {} cx: {} cy: {} distortions: {:?}]",
+            self.intrinsics.fx,
+            self.intrinsics.fy,
+            self.intrinsics.cx,
+            self.intrinsics.cy,
+            self.distortions,
+        )
     }
 }
 
@@ -195,11 +209,11 @@ impl CameraModel for RadTanModel {
         let y = point_3d.y;
         let z = point_3d.z;
 
-        let k1 = self.distortion[0];
-        let k2 = self.distortion[1];
-        let p1 = self.distortion[2];
-        let p2 = self.distortion[3];
-        let k3 = self.distortion[4];
+        let k1 = self.distortions[0];
+        let k2 = self.distortions[1];
+        let p1 = self.distortions[2];
+        let p2 = self.distortions[3];
+        let k3 = self.distortions[4];
 
         // Calculate normalized image coordinates
         let x_prime = x / z;
@@ -300,11 +314,11 @@ impl CameraModel for RadTanModel {
         let cx = self.intrinsics.cx;
         let cy = self.intrinsics.cy;
 
-        let k1 = self.distortion[0];
-        let k2 = self.distortion[1];
-        let p1 = self.distortion[2];
-        let p2 = self.distortion[3];
-        let k3 = self.distortion[4];
+        let k1 = self.distortions[0];
+        let k2 = self.distortions[1];
+        let p1 = self.distortions[2];
+        let p2 = self.distortions[3];
+        let k3 = self.distortions[4];
 
         // Calculate normalized coordinates of the distorted point
         // This is the target point in the normalized image plane we want to match
@@ -487,7 +501,7 @@ impl CameraModel for RadTanModel {
                 as u32,
         };
 
-        let mut distortion = [0.0; 5]; // Initialize the fixed-size array
+        let mut distortions = [0.0; 5]; // Initialize the fixed-size array
 
         // Ensure the YAML node contains the correct number of parameters
         if distortion_node.len() != 5 {
@@ -505,7 +519,7 @@ impl CameraModel for RadTanModel {
                 ))
             })?;
             // Assign the parsed value to the corresponding index in the array
-            distortion[i] = value;
+            distortions[i] = value;
         }
 
         // This check is redundant due to the fixed-size array and the loop above.
@@ -519,7 +533,7 @@ impl CameraModel for RadTanModel {
         let model = RadTanModel {
             intrinsics,
             resolution,
-            distortion,
+            distortions,
         };
 
         // Validate parameters
@@ -577,7 +591,7 @@ impl CameraModel for RadTanModel {
                 ),
                 (
                     serde_yaml::Value::String("distortion".to_string()),
-                    serde_yaml::to_value(self.distortion.to_vec()) // Original: explicit vec construction
+                    serde_yaml::to_value(self.distortions.to_vec()) // Original: explicit vec construction
                     .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
                 ),
                 (
@@ -654,7 +668,7 @@ impl CameraModel for RadTanModel {
     /// # Return Value
     /// A `Vec<f64>` containing the 5 distortion coefficients.
     fn get_distortion(&self) -> Vec<f64> {
-        self.distortion.to_vec()
+        self.distortions.to_vec()
     }
 
     // linear_estimation removed from impl CameraModel for RadTanModel
@@ -683,12 +697,12 @@ mod tests {
         assert_eq!(model.resolution.height, 480);
 
         // Check distortion parameters
-        assert_eq!(model.distortion.len(), 5);
-        assert_eq!(model.distortion[0], -0.28340811); // k1
-        assert_eq!(model.distortion[1], 0.07395907);  // k2
-        assert_eq!(model.distortion[2], 0.00019359);  // p1
-        assert_eq!(model.distortion[3], 1.76187114e-05); // p2
-        assert_eq!(model.distortion[4], 0.0); // k3
+        assert_eq!(model.distortions.len(), 5);
+        assert_eq!(model.distortions[0], -0.28340811); // k1
+        assert_eq!(model.distortions[1], 0.07395907);  // k2
+        assert_eq!(model.distortions[2], 0.00019359);  // p1
+        assert_eq!(model.distortions[3], 1.76187114e-05); // p2
+        assert_eq!(model.distortions[4], 0.0); // k3
     }
 
     /// Tests saving [`RadTanModel`] parameters and reloading them.
@@ -720,9 +734,9 @@ mod tests {
         assert_eq!(model.intrinsics.cy, saved_model.intrinsics.cy);
         assert_eq!(model.resolution.width, saved_model.resolution.width);
         assert_eq!(model.resolution.height, saved_model.resolution.height);
-        assert_eq!(model.distortion.len(), saved_model.distortion.len());
+        assert_eq!(model.distortions.len(), saved_model.distortions.len());
         for i in 0..5 { // Original test compared each element individually
-            assert_eq!(model.distortion[i], saved_model.distortion[i]);
+            assert_eq!(model.distortions[i], saved_model.distortions[i]);
         }
         // Clean up the saved file
         fs::remove_file(output_path).unwrap();

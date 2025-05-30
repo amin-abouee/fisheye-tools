@@ -83,7 +83,7 @@ impl Optimizer for RadTanOptimizationCost {
 
         println!("Estimated coefficients: {:?}", x_coeffs); // Print the estimated coefficients for debugging
 
-        self.model.distortion = [x_coeffs[0], x_coeffs[1], x_coeffs[2], 0.0, 0.0]; // Update the model with the estimated distortion coefficients
+        self.model.distortions = [x_coeffs[0], x_coeffs[1], x_coeffs[2], 0.0, 0.0]; // Update the model with the estimated distortion coefficients
         self.model.validate_params()?;
         Ok(())
     }
@@ -122,7 +122,7 @@ mod tests {
                 width: 752,
                 height: 480,
             },
-            distortion: [-0.2834, 0.0739, 0.0001, 1.7618e-05, 0.0], // k1,k2,p1,p2,k3
+            distortions: [-0.2834, 0.0739, 0.0001, 1.7618e-05, 0.0], // k1,k2,p1,p2,k3
         }
     }
 
