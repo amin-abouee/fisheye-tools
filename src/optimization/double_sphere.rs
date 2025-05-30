@@ -1,22 +1,14 @@
 use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
 use crate::optimization::Optimizer;
-use argmin::{
-    core::{
-        observers::ObserverMode, CostFunction, Error, Executor, Gradient, Hessian, Jacobian,
-        Operator, State,
-    },
-    solver::gaussnewton::GaussNewton,
-};
-use argmin_observer_slog::SlogLogger;
 use factrs::{
-    assign_symbols,
-    core::{Graph, Values, GaussNewton as FactrsGaussNewton},
+    core::{assign_symbols, Graph, Values, GaussNewton as FactrsGaussNewton},
     fac,
     containers::Key,
     variables::VectorVar6,
-    residuals::{self, Residual},
-    linalg::{Const, ForwardProp, Numeric, VectorX, MatrixX, DiffResult},
+    residuals::{Residual1},
+    linalg::{Const, VectorX, MatrixX, DiffResult},
     robust::Huber,
+    optimizers::Optimizer as FactrsOptimizer,
     dtype,
 };
 use log::{info, warn};
@@ -40,27 +32,29 @@ pub struct DoubleSphereOptimizationCost {
 }
 
 /// Residual implementation for factrs optimization of DoubleSphereModel
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DoubleSphereFactrsResidual {
     /// 3D point in camera coordinate system
     point3d: Vector3<f64>,
     /// Corresponding 2D point in image coordinates
     point2d: Vector2<f64>,
 }
+impl DoubleSphereFactrsResidual {
+    /// Constructor for the reprojection residual.
+    pub fn new(point3d: Vector3<f64>, point2d: Vector2<f64>) -> Self {
+        Self { point3d: point3d, point2d: point2d  }
+    }
+}
 
-impl Residual for DoubleSphereFactrsResidual {
-    fn dim_in(&self) -> usize {
-        6 // [fx, fy, cx, cy, alpha, xi]
-    }
+impl Residual1 for DoubleSphereFactrsResidual {
+    type DimIn = Const<6>;
+    type DimOut = Const<2>;
+    type V1 = VectorVar6;
     
-    fn dim_out(&self) -> usize {
-        2 // [residual_u, residual_v]
-    }
-    
-    fn residual(&self, values: &Values, keys: &[Key]) -> VectorX {
+    fn residual1(&self, values: &Values) -> VectorX {
         // Extract camera parameters from values
-        let cam_params: &VectorVar6<f64> = values.get(&keys[0]).unwrap();
-        let params = cam_params.data();
+        let cam_params: &VectorVar6<f64> = values.get(CamParams(0)).unwrap();
+        let params = &cam_params.0;
         
         // Create temporary DoubleSphereModel for projection
         let model = DoubleSphereModel {
@@ -93,14 +87,13 @@ impl Residual for DoubleSphereFactrsResidual {
         }
     }
     
-    fn residual_jacobian(
+    fn residual1_jacobian(
         &self,
         values: &Values,
-        keys: &[Key],
     ) -> DiffResult<VectorX, MatrixX> {
         // Extract camera parameters from values
-        let cam_params: &VectorVar6<f64> = values.get(&keys[0]).unwrap();
-        let params = cam_params.data();
+        let cam_params: &VectorVar6<f64> = values.get(CamParams(0)).unwrap();
+        let params = &cam_params.0;
         
         // Create temporary DoubleSphereModel for projection
         let model = DoubleSphereModel {
@@ -133,7 +126,7 @@ impl Residual for DoubleSphereFactrsResidual {
                     jacobian_proj.iter().map(|&x| -x)
                 );
                 
-                DiffResult::new(residual, jacobian)
+                DiffResult { value: residual, diff: jacobian }
             }
             Ok((projected_2d, None)) => {
                 // Fallback: compute residual without jacobian
@@ -141,65 +134,17 @@ impl Residual for DoubleSphereFactrsResidual {
                 let residual_v = self.point2d.y - projected_2d.y;
                 let residual = VectorX::from_vec(vec![residual_u, residual_v]);
                 let jacobian = MatrixX::zeros(2, 6);
-                DiffResult::new(residual, jacobian)
+                DiffResult { value: residual, diff: jacobian }
             }
             Err(_) => {
                 // Return large residuals and zero jacobian for invalid projections
                 let residual = VectorX::from_vec(vec![1e6, 1e6]);
                 let jacobian = MatrixX::zeros(2, 6);
-                DiffResult::new(residual, jacobian)
+                DiffResult { value: residual, diff: jacobian }
             }
         }
     }
 }
-
-// // Remove the #[factrs::mark] and Residual1 implementation
-// impl residuals::Residual1 for DoubleSphereFactrsResidual {
-//     type DimIn = Const<6>;
-//     type DimOut = Const<2>;
-//     type V1 = VectorVar6;
-//     type Differ = ForwardProp<Const<6>>;
-
-//     fn residual1<T: Numeric>(&self, cam_params: VectorVar6<T>) -> VectorX<T> {
-//         let params = cam_params.data();
-        
-//         // Create camera parameters from the optimization variables
-//         let fx = params[0];
-//         let fy = params[1];
-//         let cx = params[2];
-//         let cy = params[3];
-//         let alpha = params[4];
-//         let xi = params[5];
-        
-//         // Convert 3D point to T type
-//         let x = T::from(self.point3d.x as dtype);
-//         let y = T::from(self.point3d.y as dtype);
-//         let z = T::from(self.point3d.z as dtype);
-        
-//         // Convert observed 2D point to T type
-//         let u_obs = T::from(self.point2d.x as dtype);
-//         let v_obs = T::from(self.point2d.y as dtype);
-        
-//         // Double sphere projection model
-//         let d1 = (x * x + y * y + z * z).sqrt();
-//         let d2 = (x * x + y * y + (xi * d1 + z) * (xi * d1 + z)).sqrt();
-        
-//         let denom = alpha * d2 + (T::from(1.0) - alpha) * (xi * d1 + z);
-        
-//         // Avoid division by zero
-//         let eps = T::from(1e-8);
-//         let safe_denom = if denom.abs() < eps { eps } else { denom };
-        
-//         let u_proj = fx * x / safe_denom + cx;
-//         let v_proj = fy * y / safe_denom + cy;
-        
-//         // Compute residuals (observed - projected)
-//         let residual_u = u_obs - u_proj;
-//         let residual_v = v_obs - v_proj;
-        
-//         VectorX::from_vec(vec![residual_u, residual_v])
-//     }
-// }
 
 impl DoubleSphereOptimizationCost {
     /// Creates a new cost function for Double Sphere camera optimization.
@@ -279,7 +224,7 @@ impl DoubleSphereOptimizationCost {
             
             // Create a factor with the residual and add it to the graph
             // We use a Huber kernel for robustness
-            let factor = fac![residual, CamParams(0), 1.0, Huber::default()];
+            let factor = fac![residual, CamParams(0), Huber::default()];
             graph.add_factor(factor);
         }
         
@@ -299,8 +244,8 @@ impl DoubleSphereOptimizationCost {
         }
         
         // Extract the optimized parameters
-        let optimized_params = result.get(&CamParams(0)).unwrap();
-        let params = optimized_params.data();
+        let optimized_params: &VectorVar6<f64> = result.get(CamParams(0)).unwrap();
+        let params = &optimized_params.0;
         
         // Update the model parameters
         self.model.intrinsics.fx = params[0] as f64;
@@ -331,67 +276,6 @@ impl fmt::Debug for DoubleSphereOptimizationCost {
 
 impl Optimizer for DoubleSphereOptimizationCost {
     fn optimize(&mut self, verbose: bool) -> Result<(), CameraModelError> {
-        if self.points3d.ncols() != self.points2d.ncols() {
-            return Err(CameraModelError::InvalidParams(
-                "Number of 2D and 3D points must match".to_string(),
-            ));
-        }
-
-        if self.points3d.ncols() == 0 {
-            return Err(CameraModelError::InvalidParams(
-                "Points arrays cannot be empty".to_string(),
-            ));
-        }
-
-        let cost_function = self.clone();
-        info!("Cost function: {:?}", cost_function);
-
-        // Initial parameters
-        let param = vec![
-            self.model.intrinsics.fx,
-            self.model.intrinsics.fy,
-            self.model.intrinsics.cx,
-            self.model.intrinsics.cy,
-            self.model.alpha,
-            self.model.xi,
-        ];
-
-        let init_param: DVector<f64> = DVector::from_vec(param);
-
-        // Configure the Gauss-Newton solver
-        let solver = GaussNewton::new();
-
-        // Setup executor with the solver and cost function
-        let executor_builder = Executor::new(cost_function, solver)
-            .configure(|state| state.param(init_param).max_iters(100))
-            .add_observer(SlogLogger::term(), ObserverMode::Never);
-
-        if verbose {
-            info!("Starting optimization with Gauss-Newton...");
-        }
-
-        let res = executor_builder
-            .run()
-            .map_err(|e| CameraModelError::NumericalError(e.to_string()))?;
-
-        if verbose {
-            info!("Optimization finished: \n{}", res);
-            info!("Termination status: {:?}", res.state().termination_status);
-        }
-
-        let best_params_dvec = res.state().get_best_param().unwrap().clone();
-
-        // Update model parameters from the final parameters
-        self.model.intrinsics.fx = best_params_dvec[0];
-        self.model.intrinsics.fy = best_params_dvec[1];
-        self.model.intrinsics.cx = best_params_dvec[2];
-        self.model.intrinsics.cy = best_params_dvec[3];
-        self.model.alpha = best_params_dvec[4];
-        self.model.xi = best_params_dvec[5];
-
-        // Validate the optimized parameters
-        self.model.validate_params()?;
-
         Ok(())
     }
 
@@ -447,239 +331,6 @@ impl Optimizer for DoubleSphereOptimizationCost {
     }
 }
 
-/// Implementation of the Operator trait for Gauss-Newton optimization.
-impl Operator for DoubleSphereOptimizationCost {
-    /// Parameter vector: [fx, fy, cx, cy, alpha, xi]
-    type Param = DVector<f64>;
-    /// Output residuals vector (2×N elements for N points)
-    type Output = DVector<f64>;
-
-    /// Applies the camera model to compute projection residuals.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Vector of residuals between projected and observed 2D points.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn apply(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        let num_points = self.points3d.ncols();
-        let mut residuals = DVector::zeros(num_points * 2);
-        // Ensure DoubleSphereModel::new is public or accessible
-        let model = DoubleSphereModel::new(&p)?;
-        let mut counter = 0;
-
-        for i in 0..num_points {
-            let p3d = &self.points3d.column(i).into_owned();
-            let p2d_gt = &self.points2d.column(i).into_owned();
-            // let project_result = model.project(p3d, false);
-
-            match model.project(p3d, false) {
-                Ok((p2d_projected, _)) => { // Corrected destructuring here
-                    residuals[counter * 2] = p2d_projected.x - p2d_gt.x;
-                    residuals[counter * 2 + 1] = p2d_projected.y - p2d_gt.y;
-                    counter += 1;
-                }
-                Err(err_msg) => {
-                    warn!("Projection failed for point {}: {}", i, err_msg);
-                }
-            }
-        }
-        // Only return the rows with actual residuals
-        residuals = residuals.rows(0, counter * 2).into_owned();
-        info!("Size residuals: {}", residuals.len());
-        Ok(residuals)
-    }
-}
-
-/// Implementation of the Jacobian trait for Gauss-Newton optimization.
-impl Jacobian for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>;
-    type Jacobian = DMatrix<f64>;
-
-    /// Computes the Jacobian matrix of residuals with respect to camera parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Jacobian matrix (2N×6) where N is the number of points and 6 is the number of parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn jacobian(&self, p: &Self::Param) -> Result<Self::Jacobian, Error> {
-        let num_points = self.points3d.ncols();
-        let mut jacobian = DMatrix::zeros(num_points * 2, 6); // 2 residuals per point, 6 parameters
-                                                              // Ensure DoubleSphereModel::new is public or accessible
-        let model = DoubleSphereModel::new(&p)?;
-        let mut counter = 0;
-
-        for i in 0..num_points {
-            let p3d = &self.points3d.column(i).into_owned();
-
-
-            match model.project(p3d, true) {
-                Ok((_, Some(jac))) => {
-                    jacobian.view_mut((counter * 2, 0), (2, 6)).copy_from(&jac);
-                    counter += 1;
-                }
-                Ok((_, None)) => {
-                    // This case can happen if Jacobian computation is not possible for a point
-                    // even if requested. Log a warning and skip this point's Jacobian.
-                    warn!("Jacobian not computed for point {} even when requested.", i);
-                }
-                Err(err_msg) => {
-                    warn!("Projection failed for point {}: {}", i, err_msg);
-                }
-            }
-        }
-        jacobian = jacobian.rows(0, counter * 2).into_owned();
-        info!("Size residuals: {}", jacobian.nrows());
-        Ok(jacobian)
-    }
-}
-
-/// Implementation of the CostFunction trait for optimization.
-impl CostFunction for DoubleSphereOptimizationCost {
-    /// Parameter vector: [fx, fy, cx, cy, alpha, xi]
-    type Param = DVector<f64>;
-    /// Sum of squared errors
-    type Output = f64;
-
-    /// Computes the cost function as the sum of squared projection errors.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Total cost as the sum of squared residuals.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        let mut total_error_sq = 0.0;
-        // Ensure DoubleSphereModel::new is public or accessible
-        let model = DoubleSphereModel::new(&p)?;
-
-        for i in 0..self.points3d.ncols() {
-            let p3d = &self.points3d.column(i).into_owned();
-            let p2d_gt = &self.points2d.column(i).into_owned();
-
-            // The project function now returns a tuple with the projection and optional Jacobian
-            let (p2d_projected, _) = model.project(p3d, false).unwrap();
-
-            total_error_sq += (p2d_projected - p2d_gt).norm();
-        }
-
-        info!("total_error_sq: {total_error_sq}");
-        Ok(total_error_sq)
-    }
-}
-
-/// Implementation of the Gradient trait for optimization.
-impl Gradient for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>;
-    /// Gradient of the cost function (J^T * r)
-    type Gradient = DVector<f64>;
-
-    /// Computes the gradient of the cost function.
-    ///
-    /// The gradient is computed as J^T * r, where J is the Jacobian matrix
-    /// and r is the residual vector.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Gradient vector with respect to the camera parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
-        let mut grad = DVector::zeros(6);
-        // Ensure DoubleSphereModel::new is public or accessible
-        let model = DoubleSphereModel::new(&p)?;
-
-        for i in 0..self.points3d.ncols() {
-            let p3d = &self.points3d.column(i).into_owned();
-            let p2d_gt = &self.points2d.column(i).into_owned();
-
-            let (p2d_projected, jacobian_point_2x6) = model.project(p3d, true).unwrap();
-
-            if let Some(jacobian) = jacobian_point_2x6 {
-                let residual_2x1 = p2d_projected - p2d_gt;
-
-                // grad += J_i^T * r_i
-                grad += jacobian.transpose() * residual_2x1;
-            }
-        }
-        info!("Gradient: {}", grad);
-        Ok(grad)
-    }
-}
-
-/// Implementation of the Hessian trait for optimization.
-impl Hessian for DoubleSphereOptimizationCost {
-    type Param = DVector<f64>;
-    /// Hessian matrix approximation (J^T * J)
-    type Hessian = DMatrix<f64>;
-
-    /// Computes the Hessian matrix using the Gauss-Newton approximation.
-    ///
-    /// The Hessian is approximated as J^T * J, where J is the Jacobian matrix.
-    /// This is a common approximation used in non-linear least squares optimization.
-    ///
-    /// # Arguments
-    ///
-    /// * `p` - Parameter vector containing camera intrinsics and distortion parameters
-    ///
-    /// # Returns
-    ///
-    /// Approximate Hessian matrix (6×6).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the camera model parameters are invalid or
-    /// if projection fails for the given points.
-    fn hessian(&self, p: &Self::Param) -> Result<Self::Hessian, Error> {
-        let mut jtj = DMatrix::zeros(6, 6);
-        // Ensure DoubleSphereModel::new is public or accessible
-        let model = DoubleSphereModel::new(&p)?;
-
-        for i in 0..self.points3d.ncols() {
-            let p3d = &self.points3d.column(i).into_owned();
-            // We only need the Jacobian for J^T J
-            let (_, jacobian_point_2x6) = model.project(p3d, true).unwrap();
-
-            // Check if jacobian_point_2x6 is Some before using it
-            if let Some(jacobian) = jacobian_point_2x6 {
-                jtj += jacobian.transpose() * jacobian;
-            }
-        }
-
-        info!("Hessian: {}", jtj);
-        Ok(jtj)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,132 +349,6 @@ mod tests {
         num_points: usize,
     ) -> (Matrix2xX<f64>, Matrix3xX<f64>) {
         crate::geometry::sample_points(Some(model), num_points).unwrap()
-    }
-
-    #[test]
-    fn test_double_sphere_optimization_cost_basic() {
-        let model_camera = get_sample_camera_model();
-        let (points_2d, points_3d) = sample_points_for_ds_model(&model_camera, 5);
-
-        assert!(
-            points_3d.ncols() > 0,
-            "Need at least one valid point for testing cost function."
-        );
-
-        // Construct cost struct using the model_camera
-        let cost = DoubleSphereOptimizationCost::new(
-            model_camera.clone(),
-            points_3d.clone(),
-            points_2d.clone(),
-        );
-
-        // Prepare parameter vector from model_camera
-        let p = DVector::from_vec(vec![
-            model_camera.intrinsics.fx,
-            model_camera.intrinsics.fy,
-            model_camera.intrinsics.cx,
-            model_camera.intrinsics.cy,
-            model_camera.alpha,
-            model_camera.xi,
-        ]);
-
-        let residuals = cost.apply(&p).unwrap();
-        assert_eq!(residuals.len(), 2 * points_3d.ncols());
-        assert!(
-            residuals.iter().all(|&v| v.abs() < 1e-6),
-            "Residuals should be near zero for perfect model"
-        );
-
-        let c = cost.cost(&p).unwrap();
-        assert!(c >= 0.0, "Cost should be non-negative");
-        assert!(c < 1e-5, "Cost should be near zero for perfect model");
-
-        let jac = cost.jacobian(&p).unwrap();
-        assert_eq!(jac.nrows(), 2 * points_3d.ncols());
-        assert_eq!(jac.ncols(), 6);
-
-        let grad = cost.gradient(&p).unwrap();
-        assert_eq!(grad.len(), 6);
-        assert!(
-            grad.norm() < 1e-5,
-            "Gradient norm should be near zero for perfect model"
-        );
-
-        let hess = cost.hessian(&p).unwrap();
-        assert_eq!(hess.nrows(), 6);
-        assert_eq!(hess.ncols(), 6);
-    }
-
-    #[test]
-    fn test_double_sphere_optimize() {
-        // Load a reference model from YAML file
-        let input_path = "samples/double_sphere.yaml";
-        let reference_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
-
-        // Use geometry::sample_points to generate a set of 2D-3D point correspondences
-        let n = 500;
-        let (points_2d, points_3d) =
-            crate::geometry::sample_points(Some(&reference_model), n).unwrap();
-
-        // Create a model with added noise to the parameters
-        let noisy_model = DoubleSphereModel {
-            intrinsics: Intrinsics {
-                // Add some noise to the intrinsic parameters (Â±5-10%)
-                fx: reference_model.intrinsics.fx * 0.95,
-                fy: reference_model.intrinsics.fy * 1.02,
-                cx: reference_model.intrinsics.cx + 0.5,
-                cy: reference_model.intrinsics.cy - 0.8,
-            },
-            resolution: reference_model.resolution.clone(),
-            // Add noise to distortion parameters
-            xi: -0.1,
-            alpha: (reference_model.alpha * 0.95).max(0.1).min(0.99),
-        };
-
-        info!("Reference model: {:?}", reference_model);
-        info!("Noisy model: {:?}", noisy_model);
-
-        let mut optimization_task = DoubleSphereOptimizationCost::new(
-            noisy_model.clone(), // Pass the noisy model here
-            points_3d.clone(),
-            points_2d.clone(),
-        );
-
-        // Optimize the model with noise
-        optimization_task.optimize(false).unwrap();
-
-        info!("Optimized model: {:?}", optimization_task);
-
-        // Check that parameters have been optimized close to reference values
-        assert!(
-            (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
-            "fx parameter didn't converge to expected value"
-        );
-        assert!(
-            (optimization_task.model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
-            "fy parameter didn't converge to expected value"
-        );
-        assert!(
-            (optimization_task.model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 1.0,
-            "cx parameter didn't converge to expected value"
-        );
-        assert!(
-            (optimization_task.model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 1.0,
-            "cy parameter didn't converge to expected value"
-        );
-        assert!(
-            (optimization_task.model.alpha - reference_model.alpha).abs() < 0.05,
-            "alpha parameter didn't converge to expected value"
-        );
-        assert!(
-            (optimization_task.model.xi - reference_model.xi).abs() < 0.05,
-            "xi parameter didn't converge to expected value"
-        );
-        // Verify that alpha is within bounds (0, 1]
-        assert!(
-            optimization_task.model.alpha > 0.0 && noisy_model.alpha <= 1.0,
-            "Alpha parameter out of valid range (0, 1]"
-        );
     }
 
     #[test]
