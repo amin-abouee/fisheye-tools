@@ -14,7 +14,7 @@ use log::{info, warn};
 use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
 use std::fmt;
 
-assign_symbols!(CamParams: VectorVar6);
+assign_symbols!(DSCamParams: VectorVar6);
 
 /// Cost function for Double Sphere camera model optimization.
 ///
@@ -290,7 +290,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
         );
 
         // Insert the initial parameters into the values
-        values.insert(CamParams(0), initial_params);
+        values.insert(DSCamParams(0), initial_params);
 
         // Create a factrs Graph
         let mut graph = Graph::new();
@@ -308,7 +308,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
 
             // Create a factor with the residual and add it to the graph
             // Use a simple standard deviation for the noise model
-            let factor = fac![residual, CamParams(0), 1.0 as std, Huber::default()];
+            let factor = fac![residual, DSCamParams(0), 1.0 as std, Huber::default()];
             graph.add_factor(factor);
         }
 
@@ -329,7 +329,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
         }
 
         // Extract the optimized parameters
-        let optimized_params: &VectorVar6<f64> = result.get(CamParams(0)).unwrap();
+        let optimized_params: &VectorVar6<f64> = result.get(DSCamParams(0)).unwrap();
         let params = &optimized_params.0;
 
         // Update the model parameters
