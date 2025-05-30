@@ -2,10 +2,10 @@ use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
 use crate::optimization::Optimizer;
 use factrs::{
     assign_symbols,
-    core::{Graph, LevenMarquardt, GaussNewton,  Values, Huber},
+    core::{Graph, LevenMarquardt, Values, Huber},
     dtype, fac,
-    linalg::{Const, ForwardProp, Numeric, VectorX},
-    linear::{CholeskySolver, QRSolver, LUSolver},
+    linalg::{Const, Diff, DiffResult, ForwardProp, MatrixX, Numeric, VectorX},
+    linear::{QRSolver},
     optimizers::Optimizer as FactrsOptimizer,
     residuals::Residual1,
     variables::VectorVar6,
@@ -168,6 +168,69 @@ impl Residual1 for DoubleSphereFactrsResidual {
             Err(_) => {
                 // Return large residuals for invalid projections
                 VectorX::from_vec(vec![T::from(1e6), T::from(1e6)])
+            }
+        }
+    }
+
+    /// Override the default Jacobian computation to use analytical derivatives
+    /// from DoubleSphereModel::project instead of automatic differentiation.
+    /// This provides better computational efficiency while maintaining accuracy.
+    fn residual1_jacobian(
+        &self,
+        values: &factrs::containers::Values,
+        keys: &[factrs::containers::Key],
+    ) -> DiffResult<VectorX<dtype>, MatrixX<dtype>>
+    where
+        Self::V1: 'static,
+    {
+        // Get the camera parameters from values
+        let cam_params: &VectorVar6<dtype> = values.get_unchecked(keys[0]).unwrap_or_else(|| {
+            panic!("Key not found in values: {:?} with type {}", keys[0], std::any::type_name::<VectorVar6<dtype>>())
+        });
+
+        // Extract parameter values
+        let params_array = [
+            cam_params[0], // fx
+            cam_params[1], // fy
+            cam_params[2], // cx
+            cam_params[3], // cy
+            cam_params[4], // alpha
+            cam_params[5], // xi
+        ];
+
+        // Compute analytical residual and Jacobian
+        match self.compute_analytical_residual_jacobian(&params_array) {
+            Ok((analytical_residual, analytical_jacobian)) => {
+                // Convert nalgebra types to factrs types
+                let residual_vec = VectorX::from_vec(vec![analytical_residual.x, analytical_residual.y]);
+
+                // Convert the analytical Jacobian to factrs MatrixX
+                let mut jacobian_factrs = MatrixX::zeros(2, 6);
+                for i in 0..2 {
+                    for j in 0..6 {
+                        jacobian_factrs[(i, j)] = analytical_jacobian[(i, j)];
+                    }
+                }
+
+                // // Log that we're using analytical Jacobian (only for first few calls to avoid spam)
+                // static ANALYTICAL_JACOBIAN_LOG_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                // let count = ANALYTICAL_JACOBIAN_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // if count < 5 {
+                //     info!("Using analytical Jacobian (call #{}) - residual: [{:.6}, {:.6}]",
+                //           count + 1, analytical_residual.x, analytical_residual.y);
+                // }
+                // info!("Using analytical Jacobian - residual: [{:.6}, {:.6}]",
+                //       analytical_residual.x, analytical_residual.y);
+
+                DiffResult {
+                    value: residual_vec,
+                    diff: jacobian_factrs,
+                }
+            }
+            Err(e) => {
+                // Fallback to automatic differentiation if analytical computation fails
+                warn!("Analytical Jacobian computation failed: {:?}, falling back to automatic differentiation", e);
+                Self::Differ::jacobian_1(|params| self.residual1(params), cam_params)
             }
         }
     }
