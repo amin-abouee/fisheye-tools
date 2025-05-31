@@ -13,7 +13,7 @@
 //!
 //! It also contains a `validation` submodule for common parameter validation logic.
 
-use nalgebra::{DMatrix, Vector2, Vector3};
+use nalgebra::{Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
 // Camera model modules
@@ -133,10 +133,7 @@ pub trait CameraModel {
     /// * `Err(CameraModelError)`: An error if the projection fails (e.g., point is behind the camera,
     ///   projects outside the image, or numerical issues). Possible errors include
     ///   `ProjectionOutSideImage` and `PointAtCameraCenter`.
-    fn project(
-        &self,
-        point_3d: &Vector3<f64>,
-    ) -> Result<Vector2<f64>, CameraModelError>;
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError>;
 
     /// Unprojects a 2D point from image coordinates to a 3D ray in the camera's coordinate system.
     ///

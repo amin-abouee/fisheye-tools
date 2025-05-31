@@ -5,7 +5,7 @@
 //! [`CameraModel`] trait defined in the parent `camera` module.
 //! The pinhole model is the simplest camera model, assuming no lens distortion.
 
-use nalgebra::{DMatrix, DVector, Vector2, Vector3};
+use nalgebra::{DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -166,11 +166,7 @@ impl CameraModel for PinholeModel {
     ///     Err(e) => println!("Projection failed: {:?}", e),
     /// }
     /// ```
-    fn project(
-        &self,
-        point_3d: &Vector3<f64>,
-        _compute_jacobian: bool,
-    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         // If z is very small, the point is at the camera center
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
@@ -186,7 +182,7 @@ impl CameraModel for PinholeModel {
             return Err(CameraModelError::ProjectionOutSideImage);
         }
 
-        Ok((Vector2::new(u, v), None))
+        Ok(Vector2::new(u, v))
     }
 
     /// Unprojects a 2D image point to a 3D ray in camera coordinates.
@@ -287,37 +283,35 @@ impl CameraModel for PinholeModel {
         let docs = YamlLoader::load_from_str(&contents)?;
         let doc = &docs[0];
 
-        let intrinsics_yaml = doc["cam0"]["intrinsics"]
-            .as_vec()
-            .ok_or_else(|| CameraModelError::InvalidParams("YAML missing 'intrinsics' or not an array".to_string()))?;
-        let resolution_yaml = doc["cam0"]["resolution"]
-            .as_vec()
-            .ok_or_else(|| CameraModelError::InvalidParams("YAML missing 'resolution' or not an array".to_string()))?;
+        let intrinsics_yaml = doc["cam0"]["intrinsics"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams("YAML missing 'intrinsics' or not an array".to_string())
+        })?;
+        let resolution_yaml = doc["cam0"]["resolution"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams("YAML missing 'resolution' or not an array".to_string())
+        })?;
 
         let intrinsics = Intrinsics {
-            fx: intrinsics_yaml[0]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx: not a float".to_string()))?,
-            fy: intrinsics_yaml[1]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy: not a float".to_string()))?,
-            cx: intrinsics_yaml[2]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx: not a float".to_string()))?,
-            cy: intrinsics_yaml[3]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy: not a float".to_string()))?,
+            fx: intrinsics_yaml[0].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid fx: not a float".to_string())
+            })?,
+            fy: intrinsics_yaml[1].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid fy: not a float".to_string())
+            })?,
+            cx: intrinsics_yaml[2].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid cx: not a float".to_string())
+            })?,
+            cy: intrinsics_yaml[3].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid cy: not a float".to_string())
+            })?,
         };
 
         let resolution = Resolution {
-            width: resolution_yaml[0]
-                .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width: not an integer".to_string()))?
-                as u32,
-            height: resolution_yaml[1]
-                .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height: not an integer".to_string()))?
-                as u32,
+            width: resolution_yaml[0].as_i64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid width: not an integer".to_string())
+            })? as u32,
+            height: resolution_yaml[1].as_i64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid height: not an integer".to_string())
+            })? as u32,
         };
 
         let model = PinholeModel {
@@ -475,7 +469,7 @@ mod tests {
         let norm_3d = point_3d.normalize();
 
         // Project the 3D point to 2D
-        let (point_2d, _) = model.project(&point_3d, false).unwrap();
+        let point_2d = model.project(&point_3d).unwrap();
 
         // Unproject the 2D point back to 3D
         let point_3d_unprojected = model.unproject(&point_2d).unwrap();

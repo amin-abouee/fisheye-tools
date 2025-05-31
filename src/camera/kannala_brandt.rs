@@ -13,9 +13,9 @@
 //!     method for conventional, wide-angle, and fish-eye lenses.
 //!     *IEEE Transactions on Pattern Analysis and Machine Intelligence*, *28*(8), 1335-1340.
 
-use nalgebra::{DMatrix, DVector, Vector2, Vector3};
+use nalgebra::{DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
-use std::{f64::consts::PI, fs, fmt, io::Write};
+use std::{f64::consts::PI, fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
@@ -214,11 +214,7 @@ impl CameraModel for KannalaBrandtModel {
     ///     Err(e) => panic!("Projection failed: {:?}", e),
     /// }
     /// ```
-    fn project(
-        &self,
-        point_3d: &Vector3<f64>,
-        compute_jacobian: bool,
-    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         let x = point_3d.x;
         let y = point_3d.y;
         let z = point_3d.z;
@@ -268,61 +264,10 @@ impl CameraModel for KannalaBrandtModel {
             (x / r, y / r)
         };
 
-        let proj_x = fx * theta_d * x_r + cx;
-        let proj_y = fy * theta_d * y_r + cy;
-        let point_2d = Vector2::new(proj_x, proj_y);
+        let projected_x = fx * theta_d * x_r + cx;
+        let projected_y = fy * theta_d * y_r + cy;
 
-        let mut jacobian_option: Option<DMatrix<f64>> = None;
-
-        if compute_jacobian {
-            let mut jacobian = DMatrix::zeros(2, 8); // fx, fy, cx, cy, k1, k2, k3, k4
-
-            // Jacobian calculation based on C++ snippet logic
-            // (x_r, y_r) are already computed, using the same epsilon logic as projection
-
-            // Column 0: dfx
-            jacobian[(0, 0)] = theta_d * x_r;
-            jacobian[(1, 0)] = 0.0;
-
-            // Column 1: dfy
-            jacobian[(0, 1)] = 0.0;
-            jacobian[(1, 1)] = theta_d * y_r;
-
-            // Column 2: dcx
-            jacobian[(0, 2)] = 1.0;
-            jacobian[(1, 2)] = 0.0;
-
-            // Column 3: dcy
-            jacobian[(0, 3)] = 0.0;
-            jacobian[(1, 3)] = 1.0;
-
-            // Columns 4-7: dk1, dk2, dk3, dk4
-            // This part matches the C++ logic: de_dp * dp_dd_theta * dd_theta_dks
-            // where de_dp = [[fx, 0], [0, fy]]
-            //       dp_dd_theta = [x_r, y_r]^T
-            //       dd_theta_dks = [theta3, theta5, theta7, theta9]
-            // Resulting in:
-            // jacobian.rightCols<4>() = [fx * x_r; fy * y_r] * [theta3, theta5, theta7, theta9]
-
-            let fx_x_r_term = fx * x_r;
-            let fy_y_r_term = fy * y_r;
-
-            jacobian[(0, 4)] = fx_x_r_term * theta3; // d(proj_x)/dk1
-            jacobian[(1, 4)] = fy_y_r_term * theta3; // d(proj_y)/dk1
-
-            jacobian[(0, 5)] = fx_x_r_term * theta5; // d(proj_x)/dk2
-            jacobian[(1, 5)] = fy_y_r_term * theta5; // d(proj_y)/dk2
-
-            jacobian[(0, 6)] = fx_x_r_term * theta7; // d(proj_x)/dk3
-            jacobian[(1, 6)] = fy_y_r_term * theta7; // d(proj_y)/dk3
-
-            jacobian[(0, 7)] = fx_x_r_term * theta9; // d(proj_x)/dk4
-            jacobian[(1, 7)] = fy_y_r_term * theta9; // d(proj_y)/dk4
-
-            jacobian_option = Some(jacobian);
-        }
-
-        Ok((point_2d, jacobian_option))
+        Ok(Vector2::new(projected_x, projected_y))
     }
 
     /// Unprojects a 2D image point to a 3D ray in camera coordinates.
@@ -540,20 +485,26 @@ impl CameraModel for KannalaBrandtModel {
         }
 
         let intrinsics_yaml = cam_node["intrinsics"].as_vec().ok_or_else(|| {
-            CameraModelError::InvalidParams("Invalid intrinsics format in YAML: not an array".to_string())
+            CameraModelError::InvalidParams(
+                "Invalid intrinsics format in YAML: not an array".to_string(),
+            )
         })?;
         if intrinsics_yaml.len() < 4 {
             return Err(CameraModelError::InvalidParams(
-                "Intrinsics array in YAML must have at least 4 elements (fx, fy, cx, cy)".to_string(),
+                "Intrinsics array in YAML must have at least 4 elements (fx, fy, cx, cy)"
+                    .to_string(),
             ));
         }
 
         let resolution_yaml = cam_node["resolution"].as_vec().ok_or_else(|| {
-            CameraModelError::InvalidParams("Invalid resolution format in YAML: not an array".to_string())
+            CameraModelError::InvalidParams(
+                "Invalid resolution format in YAML: not an array".to_string(),
+            )
         })?;
         if resolution_yaml.len() < 2 {
             return Err(CameraModelError::InvalidParams(
-                "Resolution array in YAML must have at least 2 elements (width, height)".to_string(),
+                "Resolution array in YAML must have at least 2 elements (width, height)"
+                    .to_string(),
             ));
         }
 
@@ -565,49 +516,50 @@ impl CameraModel for KannalaBrandtModel {
         })?;
         if distortion_coeffs_yaml.len() < 4 {
             return Err(CameraModelError::InvalidParams(
-                "'distortion' array in YAML must have at least 4 elements (k1, k2, k3, k4)".to_string(),
+                "'distortion' array in YAML must have at least 4 elements (k1, k2, k3, k4)"
+                    .to_string(),
             ));
         }
 
         let intrinsics = Intrinsics {
-            fx: intrinsics_yaml[0]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx in YAML: not a float".to_string()))?,
-            fy: intrinsics_yaml[1]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy in YAML: not a float".to_string()))?,
-            cx: intrinsics_yaml[2]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx in YAML: not a float".to_string()))?,
-            cy: intrinsics_yaml[3]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy in YAML: not a float".to_string()))?,
+            fx: intrinsics_yaml[0].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid fx in YAML: not a float".to_string())
+            })?,
+            fy: intrinsics_yaml[1].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid fy in YAML: not a float".to_string())
+            })?,
+            cx: intrinsics_yaml[2].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid cx in YAML: not a float".to_string())
+            })?,
+            cy: intrinsics_yaml[3].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid cy in YAML: not a float".to_string())
+            })?,
         };
 
         let resolution = Resolution {
-            width: resolution_yaml[0]
-                .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width in YAML: not an integer".to_string()))?
-                as u32,
-            height: resolution_yaml[1]
-                .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height in YAML: not an integer".to_string()))?
-                as u32,
+            width: resolution_yaml[0].as_i64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid width in YAML: not an integer".to_string())
+            })? as u32,
+            height: resolution_yaml[1].as_i64().ok_or_else(|| {
+                CameraModelError::InvalidParams(
+                    "Invalid height in YAML: not an integer".to_string(),
+                )
+            })? as u32,
         };
 
         let distortions = [
-            distortion_coeffs_yaml[0]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k1 in YAML: not a float".to_string()))?,
-            distortion_coeffs_yaml[1]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k2 in YAML: not a float".to_string()))?,
-            distortion_coeffs_yaml[2]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k3 in YAML: not a float".to_string()))?,
-            distortion_coeffs_yaml[3]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid k4 in YAML: not a float".to_string()))?,
+            distortion_coeffs_yaml[0].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid k1 in YAML: not a float".to_string())
+            })?,
+            distortion_coeffs_yaml[1].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid k2 in YAML: not a float".to_string())
+            })?,
+            distortion_coeffs_yaml[2].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid k3 in YAML: not a float".to_string())
+            })?,
+            distortion_coeffs_yaml[3].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid k4 in YAML: not a float".to_string())
+            })?,
         ];
 
         let model = KannalaBrandtModel {
@@ -795,7 +747,8 @@ mod tests {
         assert_relative_eq!(model.distortions[0], -0.012523386218579752, epsilon = 1e-9); // k1
         assert_relative_eq!(model.distortions[1], 0.057836801948828065, epsilon = 1e-9); // k2
         assert_relative_eq!(model.distortions[2], -0.08495347810986263, epsilon = 1e-9); // k3
-        assert_relative_eq!(model.distortions[3], 0.04362766880887814, epsilon = 1e-9);  // k4
+        assert_relative_eq!(model.distortions[3], 0.04362766880887814, epsilon = 1e-9);
+        // k4
     }
 
     /// Tests loading from a non-existent YAML file, expecting an I/O error.
@@ -815,8 +768,8 @@ mod tests {
         let model = get_sample_kb_model();
         let point_3d = Vector3::new(0.1, 0.2, 1.0); // A sample point in front of the camera
 
-        match model.project(&point_3d, false) {
-            Ok((point_2d, _)) => {
+        match model.project(&point_3d) {
+            Ok(point_2d) => {
                 // Ensure the projected point is within image bounds (or check if it should be)
                 // This depends on the specific point and camera params
                 assert!(
@@ -863,7 +816,7 @@ mod tests {
     fn test_project_point_at_center() {
         let model = get_sample_kb_model();
         let point_3d = Vector3::new(0.0, 0.0, 0.0); // Point at camera optical center
-        let result = model.project(&point_3d, false);
+        let result = model.project(&point_3d);
         assert!(matches!(result, Err(CameraModelError::PointAtCameraCenter)));
     }
 
@@ -872,27 +825,8 @@ mod tests {
     fn test_project_point_behind_camera() {
         let model = get_sample_kb_model();
         let point_3d = Vector3::new(0.1, 0.2, -1.0); // Point behind camera
-        let result = model.project(&point_3d, false);
+        let result = model.project(&point_3d);
         assert!(matches!(result, Err(CameraModelError::PointIsOutSideImage)));
-    }
-
-    /// Tests projection with Jacobian computation.
-    #[test]
-    fn test_project_with_jacobian() {
-        let model = get_sample_kb_model();
-        let point_3d = Vector3::new(0.1, 0.2, 1.0);
-
-        match model.project(&point_3d, true) {
-            Ok((_point_2d, jacobian_option)) => {
-                assert!(jacobian_option.is_some(), "Jacobian should be Some when requested");
-                let jacobian = jacobian_option.unwrap();
-                assert_eq!(jacobian.nrows(), 2, "Jacobian should have 2 rows (for u, v)");
-                assert_eq!(jacobian.ncols(), 8, "Jacobian should have 8 columns (for fx,fy,cx,cy,k1,k2,k3,k4)");
-                // Further checks on Jacobian values would require numerical differentiation
-                // or known analytical values for specific points.
-            }
-            Err(e) => panic!("Projection failed: {:?}", e),
-        }
     }
 
     /// Tests unprojection of a point outside the image resolution bounds.
@@ -900,7 +834,7 @@ mod tests {
     fn test_unproject_out_of_bounds() {
         let model = get_sample_kb_model();
         let point_2d_outside = Vector2::new(
-            model.resolution.width as f64 + 10.0, // 10 pixels outside width
+            model.resolution.width as f64 + 10.0,  // 10 pixels outside width
             model.resolution.height as f64 + 10.0, // 10 pixels outside height
         );
         let result = model.unproject(&point_2d_outside);
@@ -927,6 +861,6 @@ mod tests {
         assert_relative_eq!(distortion_coeffs[0], -0.012523386218579752); // k1
         assert_relative_eq!(distortion_coeffs[1], 0.057836801948828065); // k2
         assert_relative_eq!(distortion_coeffs[2], -0.08495347810986263); // k3
-        assert_relative_eq!(distortion_coeffs[3], 0.04362766880887814);   // k4
+        assert_relative_eq!(distortion_coeffs[3], 0.04362766880887814); // k4
     }
 }

@@ -9,10 +9,10 @@ use crate::camera::{CameraModel, CameraModelError, RadTanModel};
 use crate::optimization::Optimizer;
 use factrs::{
     assign_symbols,
-    core::{Graph, LevenMarquardt, Values, Huber},
+    core::{Graph, Huber, LevenMarquardt, Values},
     dtype, fac,
     linalg::{Const, ForwardProp, Numeric, VectorX},
-    linear::{QRSolver},
+    linear::QRSolver,
     optimizers::Optimizer as FactrsOptimizer,
     residuals::Residual1,
     variables::VectorVar,
@@ -25,8 +25,15 @@ pub type VectorVar9<T = dtype> = VectorVar<9, T>;
 
 // Helper function to create VectorVar9 instances since we can't implement methods for foreign types
 fn create_vector_var9<T: Numeric>(
-    fx: T, fy: T, cx: T, cy: T,
-    k1: T, k2: T, p1: T, p2: T, k3: T
+    fx: T,
+    fy: T,
+    cx: T,
+    cy: T,
+    k1: T,
+    k2: T,
+    p1: T,
+    p2: T,
+    k3: T,
 ) -> VectorVar9<T> {
     use factrs::linalg::{Vector, VectorX};
     // Create a VectorX first, then convert to fixed-size Vector
@@ -162,19 +169,16 @@ impl Residual1 for RadTanFactrsResidual {
         let point3d_f64 = Vector3::new(
             self.point3d.x as f64,
             self.point3d.y as f64,
-            self.point3d.z as f64
+            self.point3d.z as f64,
         );
-        let point2d_f64 = Vector2::new(
-            self.point2d.x as f64,
-            self.point2d.y as f64
-        );
+        let point2d_f64 = Vector2::new(self.point2d.x as f64, self.point2d.y as f64);
 
         // Use the existing RadTanModel::project method
-        match model.project(&point3d_f64, false) {
-            Ok((projected_2d, _)) => {
+        match model.project(&point3d_f64) {
+            Ok(projected_2d) => {
                 // Compute residuals (observed - projected) and convert back to type T
-                let residual_u = T::from(point2d_f64.x - projected_2d.x);
-                let residual_v = T::from(point2d_f64.y - projected_2d.y);
+                let residual_u = T::from(projected_2d.x - point2d_f64.x);
+                let residual_v = T::from(projected_2d.y - point2d_f64.y);
                 VectorX::from_vec(vec![residual_u, residual_v])
             }
             Err(_) => {
@@ -419,7 +423,7 @@ mod tests {
             let z = 1.0 + (i as f64 * 0.01);
             let p3d = Vector3::new(x, y, z);
 
-            if let Ok((p2d, _)) = model.project(&p3d, false) {
+            if let Ok(p2d) = model.project(&p3d) {
                 if p2d.x > 0.0
                     && p2d.x < model.resolution.width as f64
                     && p2d.y > 0.0
@@ -473,14 +477,23 @@ mod tests {
                 info!("Optimization succeeded");
                 // If optimization succeeds, parameters should have changed
                 assert!(
-                    (cost_optimizer.model.intrinsics.fx - noisy_model_initial.intrinsics.fx).abs() > 1e-10
-                    || (cost_optimizer.model.intrinsics.fy - noisy_model_initial.intrinsics.fy).abs() > 1e-10
-                    || (cost_optimizer.model.distortions[0] - noisy_model_initial.distortions[0]).abs() > 1e-10,
+                    (cost_optimizer.model.intrinsics.fx - noisy_model_initial.intrinsics.fx).abs()
+                        > 1e-10
+                        || (cost_optimizer.model.intrinsics.fy - noisy_model_initial.intrinsics.fy)
+                            .abs()
+                            > 1e-10
+                        || (cost_optimizer.model.distortions[0]
+                            - noisy_model_initial.distortions[0])
+                            .abs()
+                            > 1e-10,
                     "Parameters should have changed after optimization"
                 );
             }
             Err(e) => {
-                info!("Optimization failed (which is acceptable for this test): {:?}", e);
+                info!(
+                    "Optimization failed (which is acceptable for this test): {:?}",
+                    e
+                );
                 // Optimization failure is acceptable - the important thing is that it doesn't panic
                 // and the method signature works correctly
             }

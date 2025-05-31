@@ -12,7 +12,7 @@
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use log::info;
-use nalgebra::{DMatrix, DVector, Vector2, Vector3};
+use nalgebra::{DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
@@ -272,11 +272,7 @@ impl CameraModel for DoubleSphereModel {
     ///     Err(e) => println!("Projection failed: {:?}", e),
     /// }
     /// ```
-    fn project(
-        &self,
-        point_3d: &Vector3<f64>,
-        compute_jacobian: bool,
-    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         const PRECISION: f64 = 1e-3;
 
         let x = point_3d.x;
@@ -304,63 +300,7 @@ impl CameraModel for DoubleSphereModel {
         let projected_x = self.intrinsics.fx * (mx) + self.intrinsics.cx;
         let projected_y = self.intrinsics.fy * (my) + self.intrinsics.cy;
 
-        let jacobian = if compute_jacobian {
-            let mut d_proj_d_param = DMatrix::<f64>::zeros(2, 6);
-
-            let u_cx = projected_x - self.intrinsics.cx; // mx * fx
-            let v_cy = projected_y - self.intrinsics.cy; // my * fy
-            let m_alpha = 1.0 - self.alpha;
-
-            // Set Jacobian entries for intrinsics (fx, fy, cx, cy)
-            // Derivatives of u = fx*mx + cx, v = fy*my + cy
-            d_proj_d_param[(0, 0)] = mx; // ∂u/∂fx
-            d_proj_d_param[(1, 0)] = 0.0;
-            d_proj_d_param[(0, 1)] = 0.0;
-            d_proj_d_param[(1, 1)] = my; // ∂v/∂fy
-            d_proj_d_param[(0, 2)] = 1.0; // ∂u/∂cx
-            d_proj_d_param[(1, 2)] = 0.0;
-            d_proj_d_param[(0, 3)] = 0.0;
-            d_proj_d_param[(1, 3)] = 1.0; // ∂v/∂cy
-
-            // Derivatives with respect to alpha and xi are more complex
-            // ∂(mx)/∂alpha = x * (-1/denom^2) * (d2 - gamma)
-            // ∂u/∂alpha = fx * ∂(mx)/∂alpha
-            // ∂(mx)/∂xi = x * (-1/denom^2) * (alpha * (gamma/d2)*d1 + m_alpha*d1 ) if gamma depends on xi*d1+z
-            // Need to be careful with chain rule.
-            // The provided Jacobian seems to be ∂(residual)/∂param where residual might be (u_obs - u_proj).
-            // For ∂(u_proj)/∂param:
-            // ∂u/∂alpha = fx * x * (-1/denom^2) * (d2 - gamma)
-            // ∂v/∂alpha = fy * y * (-1/denom^2) * (d2 - gamma)
-            // ∂u/∂xi = fx * x * (-1/denom^2) * (alpha * (gamma*d1/d2) + m_alpha*d1)
-            // ∂v/∂xi = fy * y * (-1/denom^2) * (alpha * (gamma*d1/d2) + m_alpha*d1)
-            // The current Jacobian code in the source might be simplified or for a specific error formulation.
-            // For now, documenting the existing Jacobian calculation structure.
-            // If u_cx = mx*fx, then d(mx)/d_alpha * fx.
-            // (gamma-d2)*u_cx is (gamma-d2)*mx*fx. This means d(denom)/d_alpha = (d2-gamma).
-            // So, d(mx)/d_alpha = x * (-1/denom^2) * (d2-gamma).
-            // Seems consistent if u_cx and v_cy are actually mx and my respectively, scaled by fx/fy later.
-            // Let's assume u_cx and v_cy are mx and my for the derivative part for now.
-            // If u_cx = mx, then ∂u/∂alpha = fx * (gamma-d2)*mx / denom. This is incorrect.
-            // The provided code seems to be:
-            // d_proj_d_param[(0,4)] = ( (gamma-d2) / denom ) * u_cx where u_cx = fx*mx
-            // This is fx * mx * (gamma-d2)/denom.
-            // This seems to be derivative w.r.t log(denom) or similar.
-            // Sticking to documenting current structure.
-            d_proj_d_param[(0, 4)] = (gamma - d2) * u_cx / denom; // Simplified from previous, assuming u_cx = fx*mx
-            d_proj_d_param[(1, 4)] = (gamma - d2) * v_cy / denom; // Simplified from previous, assuming v_cy = fy*my
-
-            // d(denom)/dxi = alpha * (gamma/d2)*d1 + (1-alpha)*d1
-            let d_denom_d_xi = (self.alpha * gamma * d1) / d2 + m_alpha * d1;
-            d_proj_d_param[(0, 5)] = -u_cx * d_denom_d_xi / denom; // ∂u/∂xi
-            d_proj_d_param[(1, 5)] = -v_cy * d_denom_d_xi / denom; // ∂v/∂xi
-
-
-            Some(d_proj_d_param)
-        } else {
-            None
-        };
-
-        Ok((Vector2::new(projected_x, projected_y), jacobian))
+        Ok(Vector2::new(projected_x, projected_y))
     }
 
     /// Unprojects a 2D image point to a 3D ray in camera coordinates.
@@ -494,10 +434,18 @@ impl CameraModel for DoubleSphereModel {
 
         let intrinsics_yaml_vec = doc["cam0"]["intrinsics"] // Renamed for clarity
             .as_vec()
-            .ok_or_else(|| CameraModelError::InvalidParams("YAML missing 'intrinsics' array under 'cam0'".to_string()))?;
+            .ok_or_else(|| {
+                CameraModelError::InvalidParams(
+                    "YAML missing 'intrinsics' array under 'cam0'".to_string(),
+                )
+            })?;
         let resolution_yaml_vec = doc["cam0"]["resolution"] // Renamed for clarity
             .as_vec()
-            .ok_or_else(|| CameraModelError::InvalidParams("YAML missing 'resolution' array under 'cam0'".to_string()))?;
+            .ok_or_else(|| {
+                CameraModelError::InvalidParams(
+                    "YAML missing 'resolution' array under 'cam0'".to_string(),
+                )
+            })?;
 
         if intrinsics_yaml_vec.len() < 6 {
             return Err(CameraModelError::InvalidParams(
@@ -505,43 +453,44 @@ impl CameraModel for DoubleSphereModel {
             ));
         }
 
-        let alpha = intrinsics_yaml_vec[4]
-            .as_f64()
-            .ok_or_else(|| CameraModelError::InvalidParams("Invalid alpha in YAML: not a float".to_string()))?;
+        let alpha = intrinsics_yaml_vec[4].as_f64().ok_or_else(|| {
+            CameraModelError::InvalidParams("Invalid alpha in YAML: not a float".to_string())
+        })?;
 
-        let xi = intrinsics_yaml_vec[5]
-            .as_f64()
-            .ok_or_else(|| CameraModelError::InvalidParams("Invalid xi in YAML: not a float".to_string()))?;
+        let xi = intrinsics_yaml_vec[5].as_f64().ok_or_else(|| {
+            CameraModelError::InvalidParams("Invalid xi in YAML: not a float".to_string())
+        })?;
 
         let intrinsics = Intrinsics {
-            fx: intrinsics_yaml_vec[0]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fx in YAML: not a float".to_string()))?,
-            fy: intrinsics_yaml_vec[1]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid fy in YAML: not a float".to_string()))?,
-            cx: intrinsics_yaml_vec[2]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cx in YAML: not a float".to_string()))?,
-            cy: intrinsics_yaml_vec[3]
-                .as_f64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid cy in YAML: not a float".to_string()))?,
+            fx: intrinsics_yaml_vec[0].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid fx in YAML: not a float".to_string())
+            })?,
+            fy: intrinsics_yaml_vec[1].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid fy in YAML: not a float".to_string())
+            })?,
+            cx: intrinsics_yaml_vec[2].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid cx in YAML: not a float".to_string())
+            })?,
+            cy: intrinsics_yaml_vec[3].as_f64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid cy in YAML: not a float".to_string())
+            })?,
         };
 
         if resolution_yaml_vec.len() < 2 {
             return Err(CameraModelError::InvalidParams(
-                "Resolution array in YAML must have at least 2 elements (width, height)".to_string()
+                "Resolution array in YAML must have at least 2 elements (width, height)"
+                    .to_string(),
             ));
         }
         let resolution = Resolution {
-            width: resolution_yaml_vec[0]
-                .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid width in YAML: not an integer".to_string()))?
-                as u32,
-            height: resolution_yaml_vec[1]
-                .as_i64()
-                .ok_or_else(|| CameraModelError::InvalidParams("Invalid height in YAML: not an integer".to_string()))?
-                as u32,
+            width: resolution_yaml_vec[0].as_i64().ok_or_else(|| {
+                CameraModelError::InvalidParams("Invalid width in YAML: not an integer".to_string())
+            })? as u32,
+            height: resolution_yaml_vec[1].as_i64().ok_or_else(|| {
+                CameraModelError::InvalidParams(
+                    "Invalid height in YAML: not an integer".to_string(),
+                )
+            })? as u32,
         };
 
         let model = DoubleSphereModel {
@@ -790,7 +739,7 @@ mod tests {
         let norm_3d = point_3d.normalize();
 
         // Project the 3D point to pixel coordinates
-        let (point_2d, _) = model.project(&point_3d, false).unwrap();
+        let point_2d = model.project(&point_3d).unwrap();
 
         // Check if the pixel coordinates are within the image bounds (basic sanity check)
         assert!(point_2d.x >= 0.0 && point_2d.x < model.resolution.width as f64);
@@ -811,12 +760,12 @@ mod tests {
         let model = get_sample_model();
         // Point very close to origin on Z axis
         let point_3d_on_z = Vector3::new(0.0, 0.0, 1e-9);
-        let result_origin = model.project(&point_3d_on_z, false);
+        let result_origin = model.project(&point_3d_on_z);
 
         // Behavior for points very close to the center can be model-specific.
         // For Double Sphere, if `denom` becomes too small or `check_projection_condition` fails,
         // it should return `PointIsOutSideImage`. Otherwise, it might project near (cx, cy).
-        if let Ok((p, _)) = result_origin {
+        if let Ok(p) = result_origin {
             assert_relative_eq!(p.x, model.intrinsics.cx, epsilon = 1e-3);
             assert_relative_eq!(p.y, model.intrinsics.cy, epsilon = 1e-3);
         } else {
@@ -827,7 +776,7 @@ mod tests {
         }
 
         // Point exactly at (0,0,0)
-        let result_exact_origin = model.project(&Vector3::new(0.0, 0.0, 0.0), false);
+        let result_exact_origin = model.project(&Vector3::new(0.0, 0.0, 0.0));
         // This should typically result in an error due to d1=0, leading to small denom or failed check.
         assert!(
             matches!(
@@ -843,7 +792,7 @@ mod tests {
     fn test_project_point_behind_camera() {
         let model = get_sample_model();
         let point_3d = Vector3::new(0.1, 0.2, -1.0); // Point behind camera
-        let result = model.project(&point_3d, false);
+        let result = model.project(&point_3d);
         // Expect an error as the point is behind the camera and likely fails check_projection_condition.
         assert!(matches!(result, Err(CameraModelError::PointIsOutSideImage)));
     }
@@ -894,7 +843,7 @@ mod tests {
     fn test_validate_params_invalid_intrinsics() {
         let mut model = get_sample_model();
         model.intrinsics.fx = 0.0; // Invalid: fx must be > 0
-        // This error comes from `validation::validate_intrinsics`.
+                                   // This error comes from `validation::validate_intrinsics`.
         assert!(matches!(
             model.validate_params(),
             Err(CameraModelError::FocalLengthMustBePositive)
@@ -917,7 +866,7 @@ mod tests {
 
         let distortion = model.get_distortion();
         assert_eq!(distortion.len(), 2);
-        assert_relative_eq!(distortion[0], model.xi);    // xi is first
+        assert_relative_eq!(distortion[0], model.xi); // xi is first
         assert_relative_eq!(distortion[1], model.alpha); // alpha is second
     }
 }

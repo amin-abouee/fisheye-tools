@@ -7,9 +7,9 @@
 //! to correct for these types of distortions in many computer vision applications.
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
-use nalgebra::{DMatrix, DVector, Matrix2, Vector2, Vector3};
+use nalgebra::{DVector, Matrix2, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
-use std::{fs, fmt, io::Write};
+use std::{fmt, fs, io::Write};
 use yaml_rust::YamlLoader;
 
 /// Represents a Radial-Tangential (RadTan) camera model.
@@ -195,11 +195,7 @@ impl CameraModel for RadTanModel {
     ///     Err(e) => println!("Projection failed: {:?}", e),
     /// }
     /// ```
-    fn project(
-        &self,
-        point_3d: &Vector3<f64>,
-        _compute_jacobian: bool,
-    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError> {
+    fn project(&self, point_3d: &Vector3<f64>) -> Result<Vector2<f64>, CameraModelError> {
         // If z is very small, the point is at the camera center
         if point_3d.z < f64::EPSILON.sqrt() {
             return Err(CameraModelError::PointAtCameraCenter);
@@ -244,7 +240,7 @@ impl CameraModel for RadTanModel {
             return Err(CameraModelError::ProjectionOutSideImage);
         }
 
-        Ok((Vector2::new(u, v), None))
+        Ok(Vector2::new(u, v))
     }
 
     /// Unprojects a 2D image point (with distortion) to a 3D ray in camera coordinates.
@@ -373,17 +369,17 @@ impl CameraModel for RadTanModel {
             let d_radial_term_dx = (k1 + 2.0 * k2 * r2 + 3.0 * k3 * r4) * dr_dx;
             let d_radial_term_dy = (k1 + 2.0 * k2 * r2 + 3.0 * k3 * r4) * dr_dy;
 
-
             // Jacobian elements (derivatives of estimated distorted coords w.r.t. undistorted coords)
             // d(x_est)/dx = radial_distortion + x * d(radial_distortion)/dx + d(tangential_x)/dx
-            let j00 = radial_distortion + x * d_radial_term_dx + 2.0 * p1 * y + p2 * (dr_dx + 4.0 * x);
+            let j00 =
+                radial_distortion + x * d_radial_term_dx + 2.0 * p1 * y + p2 * (dr_dx + 4.0 * x);
             // d(x_est)/dy = x * d(radial_distortion)/dy + d(tangential_x)/dy
             let j01 = x * d_radial_term_dy + 2.0 * p1 * x + p2 * (dr_dy);
             // d(y_est)/dx = y * d(radial_distortion)/dx + d(tangential_y)/dx
             let j10 = y * d_radial_term_dx + p1 * (dr_dx) + 2.0 * p2 * y;
             // d(y_est)/dy = radial_distortion + y * d(radial_distortion)/dy + d(tangential_y)/dy
-            let j11 = radial_distortion + y * d_radial_term_dy + p1 * (dr_dy + 4.0 * y) + 2.0 * p2 * x;
-
+            let j11 =
+                radial_distortion + y * d_radial_term_dy + p1 * (dr_dy + 4.0 * y) + 2.0 * p2 * x;
 
             // Construct the Jacobian matrix
             let jacobian = Matrix2::new(j00, j01, j10, j11);
@@ -412,7 +408,10 @@ impl CameraModel for RadTanModel {
             if iteration == MAX_ITERATIONS - 1 {
                 return Err(CameraModelError::NumericalError(
                     // Original message: "Unprojection did not converge after {MAX_ITERATIONS} iterations.".to_string(),
-                    format!("Unprojection did not converge after {} iterations.", MAX_ITERATIONS)
+                    format!(
+                        "Unprojection did not converge after {} iterations.",
+                        MAX_ITERATIONS
+                    ),
                 ));
             }
         }
@@ -570,43 +569,57 @@ impl CameraModel for RadTanModel {
     /// * [`RadTanModel::load_from_yaml()`]
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         // Create the YAML structure using serde_yaml
-        let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
-            serde_yaml::Value::String("cam0".to_string()),
-            serde_yaml::to_value(&serde_yaml::Mapping::from_iter([
-                (
-                    serde_yaml::Value::String("camera_model".to_string()),
-                    // TODO: This should ideally be "rad_tan" or similar, not "double_sphere".
-                    // Documenting current behavior.
-                    serde_yaml::Value::String("double_sphere".to_string()),
-                ),
-                (
-                    serde_yaml::Value::String("intrinsics".to_string()),
-                    serde_yaml::to_value(vec![
-                        self.intrinsics.fx,
-                        self.intrinsics.fy,
-                        self.intrinsics.cx,
-                        self.intrinsics.cy,
-                    ])
-                    .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
-                ),
-                (
-                    serde_yaml::Value::String("distortion".to_string()),
-                    serde_yaml::to_value(self.distortions.to_vec()) // Original: explicit vec construction
-                    .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
-                ),
-                (
-                    serde_yaml::Value::String("rostopic".to_string()), // Often included in Kalibr format
-                    serde_yaml::Value::String("/cam0/image_raw".to_string()),
-                ),
-                (
-                    serde_yaml::Value::String("resolution".to_string()),
-                    serde_yaml::to_value(vec![self.resolution.width, self.resolution.height])
+        let yaml =
+            serde_yaml::to_value(&serde_yaml::Mapping::from_iter(
+                [
+                    (
+                        serde_yaml::Value::String("cam0".to_string()),
+                        serde_yaml::to_value(
+                            &serde_yaml::Mapping::from_iter(
+                                [
+                                    (
+                                        serde_yaml::Value::String("camera_model".to_string()),
+                                        // TODO: This should ideally be "rad_tan" or similar, not "double_sphere".
+                                        // Documenting current behavior.
+                                        serde_yaml::Value::String("double_sphere".to_string()),
+                                    ),
+                                    (
+                                        serde_yaml::Value::String("intrinsics".to_string()),
+                                        serde_yaml::to_value(vec![
+                                            self.intrinsics.fx,
+                                            self.intrinsics.fy,
+                                            self.intrinsics.cx,
+                                            self.intrinsics.cy,
+                                        ])
+                                        .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+                                    ),
+                                    (
+                                        serde_yaml::Value::String("distortion".to_string()),
+                                        serde_yaml::to_value(self.distortions.to_vec()) // Original: explicit vec construction
+                                            .map_err(|e| {
+                                                CameraModelError::YamlError(e.to_string())
+                                            })?,
+                                    ),
+                                    (
+                                        serde_yaml::Value::String("rostopic".to_string()), // Often included in Kalibr format
+                                        serde_yaml::Value::String("/cam0/image_raw".to_string()),
+                                    ),
+                                    (
+                                        serde_yaml::Value::String("resolution".to_string()),
+                                        serde_yaml::to_value(vec![
+                                            self.resolution.width,
+                                            self.resolution.height,
+                                        ])
+                                        .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
+                                    ),
+                                ],
+                            ),
+                        )
                         .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
-                ),
-            ]))
-            .map_err(|e| CameraModelError::YamlError(e.to_string()))?,
-        )]))
-        .map_err(|e| CameraModelError::YamlError(e.to_string()))?;
+                    ),
+                ],
+            ))
+            .map_err(|e| CameraModelError::YamlError(e.to_string()))?;
 
         // Convert to string
         let yaml_string =
@@ -699,8 +712,8 @@ mod tests {
         // Check distortion parameters
         assert_eq!(model.distortions.len(), 5);
         assert_eq!(model.distortions[0], -0.28340811); // k1
-        assert_eq!(model.distortions[1], 0.07395907);  // k2
-        assert_eq!(model.distortions[2], 0.00019359);  // p1
+        assert_eq!(model.distortions[1], 0.07395907); // k2
+        assert_eq!(model.distortions[2], 0.00019359); // p1
         assert_eq!(model.distortions[3], 1.76187114e-05); // p2
         assert_eq!(model.distortions[4], 0.0); // k3
     }
@@ -712,7 +725,6 @@ mod tests {
         // Note: The original test created "output" dir with a println,
         // which is not ideal for automated tests. Assuming dir exists or can be created.
         fs::create_dir_all("output").expect("Failed to create output directory for test.");
-
 
         // Define input and output paths
         let input_path = "samples/rad_tan.yaml";
@@ -735,7 +747,8 @@ mod tests {
         assert_eq!(model.resolution.width, saved_model.resolution.width);
         assert_eq!(model.resolution.height, saved_model.resolution.height);
         assert_eq!(model.distortions.len(), saved_model.distortions.len());
-        for i in 0..5 { // Original test compared each element individually
+        for i in 0..5 {
+            // Original test compared each element individually
             assert_eq!(model.distortions[i], saved_model.distortions[i]);
         }
         // Clean up the saved file
@@ -754,7 +767,7 @@ mod tests {
         let norm_3d = point_3d.normalize();
 
         // Project the 3D point to pixel coordinates
-        let (point_2d, _) = model.project(&point_3d, false).unwrap();
+        let point_2d = model.project(&point_3d).unwrap();
 
         // Check if the pixel coordinates are within the image bounds
         assert!(point_2d.x >= 0.0 && point_2d.x < model.resolution.width as f64);
@@ -788,13 +801,13 @@ mod tests {
             Vector3::new(0.3, -0.4, 1.0),  // Bottom-right
             Vector3::new(-0.3, -0.4, 1.0), // Bottom-left
             Vector3::new(0.1, 0.1, 2.0),   // Further away
-            // Original test had one more point: Vector3::new(1.0, 0.8, 3.0),
-            // but the provided code for this attempt does not have it.
+                                           // Original test had one more point: Vector3::new(1.0, 0.8, 3.0),
+                                           // but the provided code for this attempt does not have it.
         ];
 
         for (i, original_point) in test_points.iter().enumerate() {
             // Project the 3D point to pixel coordinates
-            let (pixel_point, _) = match model.project(original_point, false) {
+            let pixel_point = match model.project(original_point) {
                 Ok(p) => p,
                 Err(e) => {
                     println!(

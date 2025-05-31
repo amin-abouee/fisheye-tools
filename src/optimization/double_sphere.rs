@@ -9,16 +9,16 @@ use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
 use crate::optimization::Optimizer;
 use factrs::{
     assign_symbols,
-    core::{Graph, LevenMarquardt, Values, Huber},
+    core::{Graph, Huber, LevenMarquardt, Values},
     dtype, fac,
     linalg::{Const, Diff, DiffResult, ForwardProp, MatrixX, Numeric, VectorX},
-    linear::{QRSolver},
+    linear::QRSolver,
     optimizers::Optimizer as FactrsOptimizer,
     residuals::Residual1,
     variables::VectorVar6,
 };
 use log::{info, warn};
-use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
+use nalgebra::{DMatrix, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use std::fmt;
 
 assign_symbols!(DSCamParams: VectorVar6);
@@ -89,61 +89,73 @@ impl DoubleSphereFactrsResidual {
     pub fn compute_analytical_residual_jacobian(
         &self,
         cam_params: &[f64; 6], // [fx, fy, cx, cy, alpha, xi]
-    ) -> Result<(Vector2<f64>, nalgebra::DMatrix<f64>), CameraModelError> {
-        // Create a DoubleSphereModel instance using the provided parameters
-        let model = DoubleSphereModel {
-            intrinsics: crate::camera::Intrinsics {
-                fx: cam_params[0],
-                fy: cam_params[1],
-                cx: cam_params[2],
-                cy: cam_params[3],
-            },
-            resolution: crate::camera::Resolution {
-                width: 0, // Resolution is not part of the optimized parameters
-                height: 0,
-            },
-            alpha: cam_params[4],
-            xi: cam_params[5],
+    ) -> Result<(Vector2<f64>, DMatrix<f64>), CameraModelError> {
+        const PRECISION: f64 = 1e-3;
+
+        let fx = cam_params[0];
+        let fy = cam_params[1];
+        let cx = cam_params[2];
+        let cy = cam_params[3];
+        let alpha = cam_params[4];
+        let xi = cam_params[5];
+
+        let x = self.point3d.x;
+        let y = self.point3d.y;
+        let z = self.point3d.z;
+
+        let r_squared = (x * x) + (y * y);
+        let d1 = (r_squared + (z * z)).sqrt();
+        let gamma = xi * d1 + z; // Note: Original paper might use 'zeta' for xi.
+        let d2 = (r_squared + gamma * gamma).sqrt();
+        let m_alpha = 1.0 - alpha;
+
+        let denom = alpha * d2 + m_alpha * gamma;
+
+        let w1 = match alpha <= 0.5 {
+            true => alpha / m_alpha,
+            false => m_alpha / alpha,
         };
+        let w2 = (w1 + xi) / (2.0 * w1 * xi + xi * xi + 1.0).sqrt();
+        let check_projection = z > -w2 * d1;
 
-        // Convert input points to f64 for projection
-        let point3d_f64 = Vector3::new(
-            self.point3d.x as f64,
-            self.point3d.y as f64,
-            self.point3d.z as f64
-        );
-        let point2d_f64 = Vector2::new(
-            self.point2d.x as f64,
-            self.point2d.y as f64
-        );
-
-        // Use the analytical Jacobian from DoubleSphereModel::project
-        match model.project(&point3d_f64, true) {
-            Ok((projected_2d, Some(jacobian))) => {
-                // Compute residuals (observed - projected)
-                let residual = Vector2::new(
-                    point2d_f64.x - projected_2d.x,
-                    point2d_f64.y - projected_2d.y
-                );
-
-                // The Jacobian from project is ∂(projected)/∂(params)
-                // We need ∂(residual)/∂(params) = -∂(projected)/∂(params)
-                let residual_jacobian = -jacobian;
-
-                Ok((residual, residual_jacobian))
-            }
-            Ok((projected_2d, None)) => {
-                // Fallback: compute residual without Jacobian
-                let residual = Vector2::new(
-                    point2d_f64.x - projected_2d.x,
-                    point2d_f64.y - projected_2d.y
-                );
-                // Return zero Jacobian as placeholder
-                let jacobian = nalgebra::DMatrix::zeros(2, 6);
-                Ok((residual, jacobian))
-            }
-            Err(e) => Err(e),
+        // Check if the projection is valid
+        if denom < PRECISION || !check_projection {
+            return Ok((Vector2::<f64>::new(1e6, 1e6), DMatrix::<f64>::zeros(2, 6)));
         }
+
+        let mx = x / denom;
+        let my = y / denom;
+
+        // Project the point
+        let projected_x = fx * (mx) + cx;
+        let projected_y = fy * (my) + cy;
+
+        let residual = Vector2::new(projected_x - self.point2d.x, projected_y - self.point2d.y);
+
+        let mut jacobian = DMatrix::<f64>::zeros(2, 6);
+
+        let u_cx = self.point2d.x - cx; // mx * fx
+        let v_cy = self.point2d.y - cy; // my * fy
+
+        // Set Jacobian entries for intrinsics
+        jacobian[(0, 0)] = x; // ∂residual_x / ∂fx
+        jacobian[(0, 1)] = 0.0; // ∂residual_y / ∂fx
+        jacobian[(1, 0)] = 0.0; // ∂residual_x / ∂fy
+        jacobian[(1, 1)] = y; // ∂residual_y / ∂fy
+
+        jacobian[(0, 2)] = denom; // ∂residual_x / ∂cx
+        jacobian[(0, 3)] = 0.0; // ∂residual_y / ∂cx
+        jacobian[(1, 2)] = 0.0; // ∂residual_x / ∂cy
+        jacobian[(1, 3)] = denom; // ∂residual_y / ∂cy
+
+        jacobian[(0, 4)] = (gamma - d2) * u_cx; // ∂residual_x / ∂alpha
+        jacobian[(1, 4)] = (gamma - d2) * v_cy; // ∂residual_y / ∂alpha
+
+        let coeff = (alpha * d1 * gamma) / d2 + (m_alpha * d1);
+        jacobian[(0, 5)] = -u_cx * coeff; // ∂residual_x / ∂xi
+        jacobian[(1, 5)] = -v_cy * coeff; // ∂residual_y / ∂xi
+
+        Ok((residual, jacobian))
     }
 }
 
@@ -198,19 +210,16 @@ impl Residual1 for DoubleSphereFactrsResidual {
         let point3d_f64 = Vector3::new(
             self.point3d.x as f64,
             self.point3d.y as f64,
-            self.point3d.z as f64
+            self.point3d.z as f64,
         );
-        let point2d_f64 = Vector2::new(
-            self.point2d.x as f64,
-            self.point2d.y as f64
-        );
+        let point2d_f64 = Vector2::new(self.point2d.x as f64, self.point2d.y as f64);
 
         // Use the existing DoubleSphereModel::project method
-        match model.project(&point3d_f64, false) {
-            Ok((projected_2d, _)) => {
+        match model.project(&point3d_f64) {
+            Ok(projected_2d) => {
                 // Compute residuals (observed - projected) and convert back to type T
-                let residual_u = T::from(point2d_f64.x - projected_2d.x);
-                let residual_v = T::from(point2d_f64.y - projected_2d.y);
+                let residual_u = T::from(projected_2d.x - point2d_f64.x);
+                let residual_v = T::from(projected_2d.y - point2d_f64.y);
                 VectorX::from_vec(vec![residual_u, residual_v])
             }
             Err(_) => {
@@ -252,7 +261,11 @@ impl Residual1 for DoubleSphereFactrsResidual {
     {
         // Get the camera parameters from values
         let cam_params: &VectorVar6<dtype> = values.get_unchecked(keys[0]).unwrap_or_else(|| {
-            panic!("Key not found in values: {:?} with type {}", keys[0], std::any::type_name::<VectorVar6<dtype>>())
+            panic!(
+                "Key not found in values: {:?} with type {}",
+                keys[0],
+                std::any::type_name::<VectorVar6<dtype>>()
+            )
         });
 
         // Extract parameter values
@@ -269,7 +282,8 @@ impl Residual1 for DoubleSphereFactrsResidual {
         match self.compute_analytical_residual_jacobian(&params_array) {
             Ok((analytical_residual, analytical_jacobian)) => {
                 // Convert nalgebra types to factrs types
-                let residual_vec = VectorX::from_vec(vec![analytical_residual.x, analytical_residual.y]);
+                let residual_vec =
+                    VectorX::from_vec(vec![analytical_residual.x, analytical_residual.y]);
 
                 // Convert the analytical Jacobian to factrs MatrixX
                 let mut jacobian_factrs = MatrixX::zeros(2, 6);
@@ -497,7 +511,10 @@ impl Optimizer for DoubleSphereOptimizationCost {
 
         self.model.alpha = alpha;
 
-        info!("Linear estimation results: alpha = {}, xi = {}", self.model.alpha, self.model.xi);
+        info!(
+            "Linear estimation results: alpha = {}, xi = {}",
+            self.model.alpha, self.model.xi
+        );
 
         // Clamp alpha to valid range if needed
         if self.model.alpha <= 0.0 {
@@ -572,7 +589,7 @@ impl DoubleSphereOptimizationCost {
             // Create residual for this point
             let residual = DoubleSphereFactrsResidual::new(
                 Vector3::new(point3d[0], point3d[1], point3d[2]),
-                Vector2::new(point2d[0], point2d[1])
+                Vector2::new(point2d[0], point2d[1]),
             );
 
             // Get current camera parameters
@@ -590,20 +607,32 @@ impl DoubleSphereOptimizationCost {
                 Ok((analytical_residual, analytical_jacobian)) => {
                     // For now, we'll skip the automatic differentiation comparison
                     // as it requires more complex setup with the Diff trait
-                    info!("Point {}: Analytical residual computed: [{}, {}]",
-                          i, analytical_residual.x, analytical_residual.y);
-                    info!("Point {}: Analytical Jacobian shape: {}x{}",
-                          i, analytical_jacobian.nrows(), analytical_jacobian.ncols());
+                    info!(
+                        "Point {}: Analytical residual computed: [{}, {}]",
+                        i, analytical_residual.x, analytical_residual.y
+                    );
+                    info!(
+                        "Point {}: Analytical Jacobian shape: {}x{}",
+                        i,
+                        analytical_jacobian.nrows(),
+                        analytical_jacobian.ncols()
+                    );
 
                     total_comparisons += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to compute analytical Jacobian for point {}: {:?}", i, e);
+                    warn!(
+                        "Failed to compute analytical Jacobian for point {}: {:?}",
+                        i, e
+                    );
                 }
             }
         }
 
-        info!("Jacobian validation completed: total_comparisons = {}", total_comparisons);
+        info!(
+            "Jacobian validation completed: total_comparisons = {}",
+            total_comparisons
+        );
 
         Ok(true) // For now, always return true since we're not doing full comparison
     }
@@ -768,7 +797,7 @@ mod tests {
         let point3d = Vector3::new(1.0, 0.5, 2.0);
 
         // Project it with the reference model to get the expected 2D point
-        let (point2d, _) = reference_model.project(&point3d, false).unwrap();
+        let point2d = reference_model.project(&point3d).unwrap();
 
         // Create a residual
         let residual = DoubleSphereFactrsResidual::new(point3d, point2d);
@@ -786,11 +815,22 @@ mod tests {
         // Compute residual - should be close to zero since we're using the same model
         let residual_value = residual.residual1(cam_params);
 
-        info!("Residual value: [{:.6}, {:.6}]", residual_value[0], residual_value[1]);
+        info!(
+            "Residual value: [{:.6}, {:.6}]",
+            residual_value[0], residual_value[1]
+        );
 
         // The residual should be very small (close to zero) since we're using the correct parameters
-        assert!(residual_value[0].abs() < 1e-10, "Residual u component too large: {}", residual_value[0]);
-        assert!(residual_value[1].abs() < 1e-10, "Residual v component too large: {}", residual_value[1]);
+        assert!(
+            residual_value[0].abs() < 1e-10,
+            "Residual u component too large: {}",
+            residual_value[0]
+        );
+        assert!(
+            residual_value[1].abs() < 1e-10,
+            "Residual v component too large: {}",
+            residual_value[1]
+        );
 
         // Test with slightly different parameters to ensure residual is non-zero
         let perturbed_params = VectorVar6::new(
@@ -803,9 +843,15 @@ mod tests {
         );
 
         let perturbed_residual = residual.residual1(perturbed_params);
-        info!("Perturbed residual value: [{:.6}, {:.6}]", perturbed_residual[0], perturbed_residual[1]);
+        info!(
+            "Perturbed residual value: [{:.6}, {:.6}]",
+            perturbed_residual[0], perturbed_residual[1]
+        );
 
         // The residual should be non-zero when parameters are different
-        assert!(perturbed_residual[0].abs() > 1e-6, "Residual should be non-zero for different parameters");
+        assert!(
+            perturbed_residual[0].abs() > 1e-6,
+            "Residual should be non-zero for different parameters"
+        );
     }
 }
