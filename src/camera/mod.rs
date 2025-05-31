@@ -136,8 +136,7 @@ pub trait CameraModel {
     fn project(
         &self,
         point_3d: &Vector3<f64>,
-        compute_jacobian: bool,
-    ) -> Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError>;
+    ) -> Result<Vector2<f64>, CameraModelError>;
 
     /// Unprojects a 2D point from image coordinates to a 3D ray in the camera's coordinate system.
     ///
