@@ -20,7 +20,7 @@ assign_symbols!(DSCamParams: VectorVar6);
 ///
 /// This structure holds the 3D-2D point correspondences used during
 /// camera calibration optimization. It implements the necessary traits
-/// for use with the argmin optimization library.
+/// for use with the factrs optimization framework.
 #[derive(Clone)]
 pub struct DoubleSphereOptimizationCost {
     model: DoubleSphereModel,
