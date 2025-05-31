@@ -8,8 +8,33 @@ This library provides implementations for various camera models, focusing on fis
 
 Currently supported models:
 - Pinhole
+- Double Sphere
+- Kannala-Brandt
+- Radial-Tangential (RadTan)
 
 (Add other models here as they are implemented)
+
+## Camera Model Optimization
+
+This library also provides capabilities for optimizing camera model parameters. This is useful for camera calibration tasks, where the goal is to find the camera parameters that best describe the relationship between 3D world points and their corresponding 2D image projections.
+
+The optimization process typically refines the intrinsic parameters (focal length, principal point) and distortion coefficients for a given camera model.
+
+### The `Optimizer` Trait
+
+A common interface for camera model optimization is defined by the `Optimizer` trait (see `src/optimization/mod.rs`). Implementations of this trait for specific camera models allow users to:
+- Perform non-linear optimization of camera parameters (usually using Levenberg-Marquardt).
+- Optionally, perform a linear estimation for an initial guess of some parameters.
+- Retrieve the current intrinsic, resolution, and distortion parameters from the model.
+
+### Supported Models for Optimization
+
+Optimization is currently implemented for the following camera models:
+- **Double Sphere**: See `DoubleSphereOptimizationCost`.
+- **Kannala-Brandt**: See `KannalaBrandtOptimizationCost`.
+- **Radial-Tangential (RadTan)**: See `RadTanOptimizationCost`.
+
+These optimization tasks utilize the `factrs` crate for the underlying non-linear least squares solving.
 
 ## Installation
 

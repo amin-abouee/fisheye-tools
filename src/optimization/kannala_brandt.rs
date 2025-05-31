@@ -1,3 +1,10 @@
+//! This module provides the cost function and optimization routines
+//! for calibrating a Kannala-Brandt camera model.
+//!
+//! It uses the `factrs` crate for non-linear optimization and defines
+//! the necessary structures and traits to integrate the Kannala-Brandt
+//! camera model with the optimization framework.
+
 use crate::camera::{CameraModel, CameraModelError, KannalaBrandtModel};
 use crate::optimization::Optimizer;
 use factrs::{
@@ -28,17 +35,26 @@ fn create_vector_var8<T: Numeric>(x: T, y: T, z: T, w: T, a: T, b: T, c: T, d: T
 assign_symbols!(KBCamParams: VectorVar8);
 
 
-/// Residual implementation for factrs optimization of KannalaBrandtModel
+/// Residual implementation for `factrs` optimization of the [`KannalaBrandtModel`].
+///
+/// This struct defines the residual error between the observed 2D point and
+/// the projected 2D point from a 3D point using the current camera model parameters.
+/// It is used by the `factrs` optimization framework.
 #[derive(Debug, Clone)]
 pub struct KannalaBrandtFactrsResidual {
-    /// 3D point in camera coordinate system
+    /// The 3D point in the camera's coordinate system.
     point3d: Vector3<dtype>,
-    /// Corresponding 2D point in image coordinates
+    /// The corresponding observed 2D point in image coordinates.
     point2d: Vector2<dtype>,
 }
 
 impl KannalaBrandtFactrsResidual {
-    /// Constructor for the reprojection residual.
+    /// Creates a new residual for a single 3D-2D point correspondence.
+    ///
+    /// # Arguments
+    ///
+    /// * `point3d` - The 3D point in the camera's coordinate system.
+    /// * `point2d` - The corresponding observed 2D point in image coordinates.
     pub fn new(point3d: Vector3<f64>, point2d: Vector2<f64>) -> Self {
         Self {
             point3d: point3d.cast::<dtype>(),
@@ -46,9 +62,25 @@ impl KannalaBrandtFactrsResidual {
         }
     }
 
-    /// Compute residual and analytical Jacobian for validation/debugging purposes.
-    /// This method uses the analytical Jacobian from KannalaBrandtModel::project
-    /// to provide a reference implementation for comparison with automatic differentiation.
+    /// Computes the residual and its analytical Jacobian with respect to camera parameters.
+    ///
+    /// This method is primarily used for validation and debugging purposes. It leverages
+    /// the analytical Jacobian computation from [`KannalaBrandtModel::project`] to provide
+    /// a reference for comparing with Jacobians obtained through automatic differentiation.
+    ///
+    /// # Arguments
+    ///
+    /// * `cam_params` - An array of 8 `f64` values representing the camera parameters:
+    ///   `[fx, fy, cx, cy, k1, k2, k3, k4]`.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((residual, jacobian))` - A tuple where `residual` is a `Vector2<f64>`
+    ///   representing the difference between the observed and projected 2D point,
+    ///   and `jacobian` is a `nalgebra::DMatrix<f64>` (2x8) representing the
+    ///   Jacobian of the residual with respect to the camera parameters.
+    /// * `Err(CameraModelError)` - If the projection or Jacobian computation fails.
     pub fn compute_analytical_residual_jacobian(
         &self,
         cam_params: &[f64; 8], // [fx, fy, cx, cy, k1, k2, k3, k4]
@@ -117,6 +149,19 @@ impl Residual1 for KannalaBrandtFactrsResidual {
     type V1 = VectorVar<8, dtype>;
     type Differ = ForwardProp<Self::DimIn>;
 
+    /// Computes the residual vector for the given camera parameters.
+    ///
+    /// The residual is defined as `observed_2d_point - project(3d_point, camera_parameters)`.
+    /// This method is called by the `factrs` optimizer during the optimization process.
+    ///
+    /// # Arguments
+    ///
+    /// * `cam_params` - A `VectorVar<8, T>` containing the current camera parameters
+    ///   `[fx, fy, cx, cy, k1, k2, k3, k4]`. `T` is a numeric type used by `factrs`.
+    ///
+    /// # Returns
+    ///
+    /// A `VectorX<T>` of dimension 2, representing the residual `[ru, rv]`.
     fn residual1<T: Numeric>(&self, cam_params: VectorVar<8, T>) -> VectorX<T> {
         // Convert camera parameters from generic type T to f64 for KannalaBrandtModel
         // Using to_subset() which is available through SupersetOf<f64> trait
@@ -170,9 +215,28 @@ impl Residual1 for KannalaBrandtFactrsResidual {
         }
     }
 
-    /// Override the default Jacobian computation to use analytical derivatives
-    /// from KannalaBrandtModel::project instead of automatic differentiation.
-    /// This provides better computational efficiency while maintaining accuracy.
+    /// Computes the Jacobian of the residual function with respect to the camera parameters.
+    ///
+    /// This implementation overrides the default automatic differentiation provided by `factrs`
+    /// and uses the analytical Jacobian derived from [`KannalaBrandtModel::project`].
+    /// This approach offers better computational efficiency while maintaining accuracy.
+    ///
+    /// If the analytical computation fails (e.g., due to invalid parameters leading to
+    /// projection errors), it falls back to automatic differentiation as a safety measure.
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - A `factrs::containers::Values` map containing the current state
+    ///   of the optimization variables (i.e., camera parameters).
+    /// * `keys` - A slice of `factrs::containers::Key` indicating which variables
+    ///   (in this case, `KBCamParams(0)`) to compute the Jacobian against.
+    ///
+    /// # Returns
+    ///
+    /// A `DiffResult<VectorX<dtype>, MatrixX<dtype>>` containing:
+    /// * `value` - The residual vector computed at the given camera parameters.
+    /// * `diff` - The 2x8 Jacobian matrix of the residual with respect to the
+    ///   camera parameters `[fx, fy, cx, cy, k1, k2, k3, k4]`.
     fn residual1_jacobian(
         &self,
         values: &factrs::containers::Values,
@@ -227,14 +291,38 @@ impl Residual1 for KannalaBrandtFactrsResidual {
 }
 
 /// Cost function for Kannala-Brandt camera model optimization.
+///
+/// This structure holds the 3D-2D point correspondences and the camera model
+/// instance used during camera calibration optimization. It implements the
+/// [`Optimizer`] trait for use with the optimization framework.
 #[derive(Clone)]
 pub struct KannalaBrandtOptimizationCost {
+    /// The Kannala-Brandt camera model to be optimized.
     model: KannalaBrandtModel,
+    /// 3D points in the camera's coordinate system (3×N matrix).
+    /// Each column represents a 3D point.
     points3d: Matrix3xX<f64>,
+    /// Corresponding 2D points in image coordinates (2×N matrix).
+    /// Each column represents a 2D point observed in the image.
     points2d: Matrix2xX<f64>,
 }
 
 impl KannalaBrandtOptimizationCost {
+    /// Creates a new [`KannalaBrandtOptimizationCost`] instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - The initial [`KannalaBrandtModel`] to be optimized.
+    /// * `points3d` - A 3×N matrix where each column is a 3D point in the
+    ///   camera's coordinate system.
+    /// * `points2d` - A 2×N matrix where each column is the corresponding
+    ///   observed 2D point in image coordinates.
+    ///
+    /// # Panics
+    ///
+    /// This method does not panic directly, but the `optimize` method will return
+    /// an error if the number of 3D and 2D points do not match or if the
+    /// point arrays are empty.
     pub fn new(
         model: KannalaBrandtModel,
         points3d: Matrix3xX<f64>,
@@ -249,6 +337,25 @@ impl KannalaBrandtOptimizationCost {
 }
 
 impl Optimizer for KannalaBrandtOptimizationCost {
+    /// Optimizes the Kannala-Brandt camera model parameters.
+    ///
+    /// This method uses the Levenberg-Marquardt algorithm provided by the `factrs`
+    /// crate to minimize the reprojection error between the observed 2D points
+    /// and the 2D points projected from the 3D points using the current
+    /// camera model parameters.
+    ///
+    /// The parameters being optimized are `[fx, fy, cx, cy, k1, k2, k3, k4]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `verbose` - If `true`, prints optimization progress and results to the console.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the optimization was successful and the model parameters
+    ///   have been updated.
+    /// * `Err(CameraModelError)` - If an error occurred during optimization,
+    ///   such as invalid input parameters or numerical issues.
     fn optimize(&mut self, verbose: bool) -> Result<(), CameraModelError> {
         if self.points3d.ncols() != self.points2d.ncols() {
             return Err(CameraModelError::InvalidParams(
@@ -335,6 +442,20 @@ impl Optimizer for KannalaBrandtOptimizationCost {
         Ok(())
     }
 
+    /// Performs a linear estimation of the distortion parameters `k1, k2, k3, k4`
+    /// for the Kannala-Brandt model.
+    ///
+    /// This method provides an initial estimate for the distortion parameters by
+    /// reformulating the projection equations into a linear system.
+    /// The intrinsic parameters `fx, fy, cx, cy` are assumed to be known and fixed.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the linear estimation was successful and `self.model.distortions`
+    ///   has been updated.
+    /// * `Err(CameraModelError)` - If an error occurred, such as mismatched point
+    ///   counts, insufficient points for estimation (needs at least 4), or
+    ///   numerical issues in solving the linear system.
     fn linear_estimation(&mut self) -> Result<(), CameraModelError>
     where
         Self: Sized,
@@ -447,24 +568,49 @@ impl Optimizer for KannalaBrandtOptimizationCost {
         Ok(())
     }
 
+    /// Returns a clone of the current intrinsic parameters of the camera model.
     fn get_intrinsics(&self) -> crate::camera::Intrinsics {
         self.model.intrinsics.clone()
     }
 
+    /// Returns a clone of the current resolution of the camera model.
     fn get_resolution(&self) -> crate::camera::Resolution {
         self.model.resolution.clone()
     }
 
+    /// Returns a vector containing the distortion parameters of the model.
+    /// For the Kannala-Brandt model, these are `[k1, k2, k3, k4]`.
     fn get_distortion(&self) -> Vec<f64> {
         self.model.get_distortion()
     }
 }
 
 impl KannalaBrandtOptimizationCost {
-    /// Validate automatic differentiation against analytical Jacobian.
-    /// This method compares the Jacobian computed by automatic differentiation
-    /// with the analytical Jacobian from KannalaBrandtModel::project.
-    /// Useful for debugging and ensuring correctness.
+    /// Validates the Jacobian computation by comparing analytical Jacobians with those
+    /// obtained via automatic differentiation (though the AD part is currently placeholder).
+    ///
+    /// This method iterates through a subset of the 3D-2D point correspondences,
+    /// computes the analytical Jacobian of the reprojection residual with respect
+    /// to the camera parameters using [`KannalaBrandtFactrsResidual::compute_analytical_residual_jacobian`],
+    /// and logs the results.
+    ///
+    /// The comparison with automatic differentiation is not fully implemented in this version.
+    ///
+    /// # Arguments
+    ///
+    /// * `_tolerance` - A tolerance value for comparing Jacobians (currently unused).
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - Currently always returns `Ok(true)` as the full comparison
+    ///   is not implemented. It indicates that the analytical Jacobians were computed.
+    /// * `Err(CameraModelError)` - If an error occurs during the process.
+    ///
+    /// # Panics
+    ///
+    /// This method might panic if `KBCamParams(0)` is not found in the `values` map
+    /// during the call to `residual1_jacobian` if it were to fall back to AD,
+    /// though the current implementation primarily focuses on the analytical path.
     pub fn validate_jacobian(&self, _tolerance: f64) -> Result<bool, CameraModelError> {
         info!("Validating automatic differentiation against analytical Jacobian...");
 
