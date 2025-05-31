@@ -640,7 +640,7 @@ impl CameraModel for DoubleSphereModel {
     ///
     /// A `Vec<f64>` containing the two distortion parameters: `[xi, alpha]`.
     fn get_distortion(&self) -> Vec<f64> {
-        vec![self.xi, self.alpha] // Order: xi, then alpha
+        vec![self.alpha, self.xi] // Order: xi, then alpha
     }
 
     // linear_estimation removed from impl CameraModel for DoubleSphereModel
