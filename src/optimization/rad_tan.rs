@@ -1,3 +1,10 @@
+//! This module provides the cost function and optimization routines
+//! for calibrating a Radial-Tangential (RadTan) camera model.
+//!
+//! It uses the `factrs` crate for non-linear optimization and defines
+//! the necessary structures and traits to integrate the RadTan
+//! camera model with the optimization framework.
+
 use crate::camera::{CameraModel, CameraModelError, RadTanModel};
 use crate::optimization::Optimizer;
 use factrs::{
@@ -30,14 +37,38 @@ fn create_vector_var9<T: Numeric>(
 
 assign_symbols!(RTCamParams: VectorVar9);
 
+/// Cost function for Radial-Tangential (RadTan) camera model optimization.
+///
+/// This structure holds the 3D-2D point correspondences and the camera model
+/// instance used during camera calibration optimization. It implements the
+/// [`Optimizer`] trait for use with the optimization framework.
 #[derive(Clone)]
 pub struct RadTanOptimizationCost {
+    /// The RadTan camera model to be optimized.
     model: RadTanModel,
+    /// 3D points in the camera's coordinate system (3×N matrix).
+    /// Each column represents a 3D point.
     points3d: Matrix3xX<f64>,
+    /// Corresponding 2D points in image coordinates (2×N matrix).
+    /// Each column represents a 2D point observed in the image.
     points2d: Matrix2xX<f64>,
 }
 
 impl RadTanOptimizationCost {
+    /// Creates a new [`RadTanOptimizationCost`] instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - The initial [`RadTanModel`] to be optimized.
+    /// * `points3d` - A 3×N matrix where each column is a 3D point in the
+    ///   camera's coordinate system.
+    /// * `points2d` - A 2×N matrix where each column is the corresponding
+    ///   observed 2D point in image coordinates.
+    ///
+    /// # Panics
+    ///
+    /// Asserts that the number of 3D points matches the number of 2D points.
+    /// The `optimize` method will also return an error if the point arrays are empty.
     pub fn new(model: RadTanModel, points3d: Matrix3xX<f64>, points2d: Matrix2xX<f64>) -> Self {
         assert_eq!(points3d.ncols(), points2d.ncols());
         RadTanOptimizationCost {
@@ -48,17 +79,26 @@ impl RadTanOptimizationCost {
     }
 }
 
-/// Residual implementation for factrs optimization of RadTanModel
+/// Residual implementation for `factrs` optimization of the [`RadTanModel`].
+///
+/// This struct defines the residual error between the observed 2D point and
+/// the projected 2D point from a 3D point using the current camera model parameters.
+/// It is used by the `factrs` optimization framework.
 #[derive(Debug, Clone)]
 pub struct RadTanFactrsResidual {
-    /// 3D point in camera coordinate system
+    /// The 3D point in the camera's coordinate system.
     point3d: Vector3<dtype>,
-    /// Corresponding 2D point in image coordinates
+    /// The corresponding observed 2D point in image coordinates.
     point2d: Vector2<dtype>,
 }
 
 impl RadTanFactrsResidual {
-    /// Constructor for the reprojection residual.
+    /// Creates a new residual for a single 3D-2D point correspondence.
+    ///
+    /// # Arguments
+    ///
+    /// * `point3d` - The 3D point in the camera's coordinate system.
+    /// * `point2d` - The corresponding observed 2D point in image coordinates.
     pub fn new(point3d: Vector3<f64>, point2d: Vector2<f64>) -> Self {
         Self {
             point3d: point3d.cast::<dtype>(),
@@ -75,6 +115,21 @@ impl Residual1 for RadTanFactrsResidual {
     type V1 = VectorVar<9, dtype>;
     type Differ = ForwardProp<Self::DimIn>;
 
+    /// Computes the residual vector for the given camera parameters.
+    ///
+    /// The residual is defined as `observed_2d_point - project(3d_point, camera_parameters)`.
+    /// This method is called by the `factrs` optimizer during the optimization process.
+    ///
+    /// The camera parameters `cam_params` are: `[fx, fy, cx, cy, k1, k2, p1, p2, k3]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `cam_params` - A `VectorVar9<T>` containing the current camera parameters.
+    ///   `T` is a numeric type used by `factrs`.
+    ///
+    /// # Returns
+    ///
+    /// A `VectorX<T>` of dimension 2, representing the residual `[ru, rv]`.
     fn residual1<T: Numeric>(&self, cam_params: VectorVar9<T>) -> VectorX<T> {
         // Convert camera parameters from generic type T to f64 for RadTanModel
         // Using to_subset() which is available through SupersetOf<f64> trait
@@ -131,6 +186,25 @@ impl Residual1 for RadTanFactrsResidual {
 }
 
 impl Optimizer for RadTanOptimizationCost {
+    /// Optimizes the RadTan camera model parameters.
+    ///
+    /// This method uses the Levenberg-Marquardt algorithm provided by the `factrs`
+    /// crate to minimize the reprojection error between the observed 2D points
+    /// and the 2D points projected from the 3D points using the current
+    /// camera model parameters.
+    ///
+    /// The parameters being optimized are `[fx, fy, cx, cy, k1, k2, p1, p2, k3]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `verbose` - If `true`, prints optimization progress and results to the console.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the optimization was successful and the model parameters
+    ///   have been updated.
+    /// * `Err(CameraModelError)` - If an error occurred during optimization,
+    ///   such as invalid input parameters or numerical issues.
     fn optimize(&mut self, verbose: bool) -> Result<(), CameraModelError> {
         if self.points3d.ncols() != self.points2d.ncols() {
             return Err(CameraModelError::InvalidParams(
@@ -220,6 +294,20 @@ impl Optimizer for RadTanOptimizationCost {
         Ok(())
     }
 
+    /// Performs a linear estimation of the radial distortion parameters `k1, k2, k3`
+    /// for the RadTan model.
+    ///
+    /// This method provides an initial estimate for the radial distortion parameters
+    /// `k1, k2, k3` by reformulating the projection equations into a linear system.
+    /// Tangential distortion parameters `p1, p2` are set to zero in this estimation.
+    /// The intrinsic parameters `fx, fy, cx, cy` are assumed to be known and fixed.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the linear estimation was successful and `self.model.distortions`
+    ///   has been updated for `k1, k2, k3` (with `p1, p2` set to 0.0).
+    /// * `Err(CameraModelError)` - If an error occurred, such as mismatched point
+    ///   counts or numerical issues in solving the linear system.
     fn linear_estimation(&mut self) -> Result<(), CameraModelError>
     where
         Self: Sized,
@@ -276,14 +364,18 @@ impl Optimizer for RadTanOptimizationCost {
         Ok(())
     }
 
+    /// Returns a clone of the current intrinsic parameters of the camera model.
     fn get_intrinsics(&self) -> crate::camera::Intrinsics {
         self.model.intrinsics.clone()
     }
 
+    /// Returns a clone of the current resolution of the camera model.
     fn get_resolution(&self) -> crate::camera::Resolution {
         self.model.resolution.clone()
     }
 
+    /// Returns a vector containing the distortion parameters of the model.
+    /// For the RadTan model, these are `[k1, k2, p1, p2, k3]`.
     fn get_distortion(&self) -> Vec<f64> {
         self.model.get_distortion()
     }
