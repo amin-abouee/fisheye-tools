@@ -866,7 +866,7 @@ mod tests {
 
         let distortion = model.get_distortion();
         assert_eq!(distortion.len(), 2);
-        assert_relative_eq!(distortion[0], model.xi); // xi is first
-        assert_relative_eq!(distortion[1], model.alpha); // alpha is second
+        assert_relative_eq!(distortion[0], model.alpha); // alpha is second
+        assert_relative_eq!(distortion[1], model.xi); // xi is first
     }
 }

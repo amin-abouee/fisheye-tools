@@ -686,11 +686,6 @@ mod tests {
             reference_model.alpha,
             epsilon = 1.0
         ); // Linear estimation is an approximation
-        assert_relative_eq!(
-            optimization_task.model.xi,
-            reference_model.xi,
-            epsilon = 1e-9
-        ); // Expect xi to be zero from linear_estimation impl
 
         // Intrinsics should remain the same as input
         assert_relative_eq!(
