@@ -1,5 +1,7 @@
 use crate::camera::{CameraModel, CameraModelError};
 use nalgebra::{Matrix2xX, Matrix3xX, Vector2};
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(thiserror::Error, Debug)]
 pub enum GeometryError {
@@ -9,8 +11,26 @@ pub enum GeometryError {
     NumericalError(String),
     #[error("Matrix singularity detected")]
     SingularMatrix,
-    #[error("Point projection failed: {0}")]
-    ProjectionError(String),
+    #[error("Zero projection points")]
+    ZeroProjectionPoints,
+    #[error("Invalid parameters: {0}")]
+    InvalidParams(String),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ProjectionError  {
+    pub rmse: f64,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub stddev: f64, 
+    pub median: f64,
+}
+
+impl fmt::Debug for ProjectionError  {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Projection Error [ rmse: {}, min: {}, max: {}, mean: {}, stddev: {}, median: {} ]", self.rmse, self.min, self.max, self.mean, self.stddev, self.median)
+    }
 }
 
 /// Generate a grid of sample points that are evenly distributed across the image,
@@ -103,6 +123,67 @@ where
     }
 
     Ok((points_2d_result, points_3d_result))
+}
+
+pub fn compute_reprojection_error<T>(
+    camera_model: Option<&T>,
+    points3d: &Matrix3xX<f64>,
+    points2d: &Matrix2xX<f64>,
+) -> Result<ProjectionError, GeometryError>
+where
+    T: ?Sized + CameraModel,
+{
+    let camera_model = camera_model.unwrap();
+    let mut errors = vec![];
+    for i in 0..points3d.ncols() {
+        let point3d = points3d.column(i).into_owned();
+        let point2d = points2d.column(i).into_owned();
+
+        if let Ok(point2d_projected) = camera_model.project(&point3d) {
+            let reprojection_error = (point2d_projected - point2d).norm();
+            errors.push(reprojection_error);
+        }
+    }
+
+    if errors.is_empty() {
+        return Err(GeometryError::ZeroProjectionPoints);
+    }
+
+    // Calculate statistics
+    let n = errors.len() as f64;
+    let sum: f64 = errors.iter().sum::<f64>();
+    let mean = sum / n;
+    
+    // Calculate variance and standard deviation
+    let variance: f64 = errors.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
+    let stddev = variance.sqrt();
+    
+    // Calculate RMSE
+    let sum_squared: f64 = errors.iter().map(|x| x.powi(2)).sum::<f64>();
+    let rmse = (sum_squared / n).sqrt();
+    
+    // Find min and max
+    let min = errors.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max = errors.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    
+    // Calculate median
+    let mut sorted_errors = errors.clone();
+    sorted_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = if sorted_errors.len() % 2 == 0 {
+        let mid = sorted_errors.len() / 2;
+        (sorted_errors[mid - 1] + sorted_errors[mid]) / 2.0
+    } else {
+        sorted_errors[sorted_errors.len() / 2]
+    };
+
+    Ok(ProjectionError {
+        rmse,
+        min,
+        max,
+        mean,
+        stddev,
+        median,
+    })
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 //! camera model with the optimization framework.
 
 use crate::camera::{CameraModel, CameraModelError, KannalaBrandtModel};
-use crate::optimization::Optimizer;
+use crate::optimization::{Optimizer};
 use factrs::{
     assign_symbols,
     core::{Graph, Huber, LevenMarquardt, Values},

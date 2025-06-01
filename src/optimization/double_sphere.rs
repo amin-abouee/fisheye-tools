@@ -6,7 +6,8 @@
 //! camera model with the optimization framework.
 
 use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
-use crate::optimization::Optimizer;
+use crate::optimization::{Optimizer};
+use crate::geometry::compute_reprojection_error;
 use factrs::{
     assign_symbols,
     core::{Graph, Huber, LevenMarquardt, Values},
@@ -206,20 +207,12 @@ impl Residual1 for DoubleSphereFactrsResidual {
             xi: xi_f64,
         };
 
-        // Convert input points to f64 for projection
-        let point3d_f64 = Vector3::new(
-            self.point3d.x as f64,
-            self.point3d.y as f64,
-            self.point3d.z as f64,
-        );
-        let point2d_f64 = Vector2::new(self.point2d.x as f64, self.point2d.y as f64);
-
         // Use the existing DoubleSphereModel::project method
-        match model.project(&point3d_f64) {
+        match model.project(&self.point3d) {
             Ok(projected_2d) => {
                 // Compute residuals (observed - projected) and convert back to type T
-                let residual_u = T::from(projected_2d.x - point2d_f64.x);
-                let residual_v = T::from(projected_2d.y - point2d_f64.y);
+                let residual_u = T::from(projected_2d.x - self.point2d.x);
+                let residual_v = T::from(projected_2d.y - self.point2d.y);
                 VectorX::from_vec(vec![residual_u, residual_v])
             }
             Err(_) => {
@@ -286,16 +279,16 @@ impl Residual1 for DoubleSphereFactrsResidual {
                     VectorX::from_vec(vec![analytical_residual.x, analytical_residual.y]);
 
                 // Convert the analytical Jacobian to factrs MatrixX
-                let mut jacobian_factrs = MatrixX::zeros(2, 6);
-                for i in 0..2 {
-                    for j in 0..6 {
-                        jacobian_factrs[(i, j)] = analytical_jacobian[(i, j)];
-                    }
-                }
+                // let mut jacobian_factrs = MatrixX::zeros(2, 6);
+                // for i in 0..2 {
+                //     for j in 0..6 {
+                //         jacobian_factrs[(i, j)] = analytical_jacobian[(i, j)];
+                //     }
+                // }
 
                 DiffResult {
                     value: residual_vec,
-                    diff: jacobian_factrs,
+                    diff: analytical_jacobian,
                 }
             }
             Err(e) => {
@@ -381,6 +374,10 @@ impl Optimizer for DoubleSphereOptimizationCost {
             ));
         }
 
+        if let Ok(error_statistic) = compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d){
+            info!("Before Optimization: {:?}", error_statistic);
+        }
+
         // Create a factrs Values object to hold the camera parameters
         let mut values = Values::new();
 
@@ -448,6 +445,10 @@ impl Optimizer for DoubleSphereOptimizationCost {
         // Validate the optimized parameters
         self.model.validate_params()?;
 
+        if let Ok(error_statistic) = compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d){
+            info!("After Optimization: {:?}", error_statistic);
+        }
+
         Ok(())
     }
 
@@ -510,6 +511,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
         };
 
         self.model.alpha = alpha;
+        self.model.xi = 0.0;
 
         info!(
             "Linear estimation results: alpha = {}, xi = {}",

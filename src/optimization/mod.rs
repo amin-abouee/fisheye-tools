@@ -15,6 +15,8 @@
 //!
 //! This module re-exports the main optimization cost structures from its submodules.
 
+use serde::{Deserialize, Serialize};
+
 pub mod double_sphere;
 pub mod kannala_brandt;
 pub mod rad_tan;
@@ -25,11 +27,22 @@ pub use rad_tan::RadTanOptimizationCost;
 
 use crate::camera::{CameraModelError, Intrinsics, Resolution};
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ProjectionError  {
+    pub rmse: f64,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub stddev: f64, 
+    pub median: f64,
+}
+
 /// A trait for camera model optimization tasks.
 ///
 /// Types implementing `Optimizer` are responsible for refining the parameters
 /// of a specific camera model. This typically involves minimizing the
 /// reprojection error given a set of 3D-2D point correspondences.
+/// 
 pub trait Optimizer {
     /// Performs non-linear optimization to refine the camera model parameters.
     ///
@@ -66,6 +79,8 @@ pub trait Optimizer {
     fn linear_estimation(&mut self,) -> Result<(), CameraModelError>
     where
         Self: Sized;
+
+    // fn compute_reprojection_error(&self) -> Result<ProjectionError, CameraModelError>;
 
     /// Retrieves the current intrinsic parameters from the underlying camera model.
     ///
