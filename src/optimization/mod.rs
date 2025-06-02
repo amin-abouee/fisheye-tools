@@ -20,10 +20,12 @@ use serde::{Deserialize, Serialize};
 pub mod double_sphere;
 pub mod kannala_brandt;
 pub mod rad_tan;
+pub mod ucm;
 
 pub use double_sphere::DoubleSphereOptimizationCost;
 pub use kannala_brandt::KannalaBrandtOptimizationCost;
 pub use rad_tan::RadTanOptimizationCost;
+pub use ucm::UcmOptimizationCost;
 
 use crate::camera::{CameraModelError, Intrinsics, Resolution};
 
