@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 // Camera model modules
 pub mod double_sphere;
+pub mod eucm;
 pub mod kannala_brandt;
 pub mod pinhole;
 pub mod rad_tan;
@@ -25,6 +26,7 @@ pub mod ucm;
 
 // Re-export camera models
 pub use double_sphere::DoubleSphereModel;
+pub use eucm::EucmModel;
 pub use kannala_brandt::KannalaBrandtModel;
 pub use pinhole::PinholeModel;
 pub use rad_tan::RadTanModel;

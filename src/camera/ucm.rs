@@ -41,8 +41,8 @@ use yaml_rust::YamlLoader;
 ///
 /// ```rust
 /// use nalgebra::DVector;
-/// use vision_toolkit_rs::camera::ucm::UcmModel;
-/// use vision_toolkit_rs::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
+/// use fisheye_tools::camera::ucm::UcmModel;
+/// use fisheye_tools::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
 ///
 /// // Parameters: fx, fy, cx, cy, alpha
 /// let params = DVector::from_vec(vec![1313.83, 1313.27, 960.471, 546.981, 1.01674]);
@@ -94,8 +94,8 @@ impl UcmModel {
     ///
     /// ```rust
     /// use nalgebra::DVector;
-    /// use vision_toolkit_rs::camera::ucm::UcmModel;
-    /// use vision_toolkit_rs::camera::Resolution;
+    /// use fisheye_tools::camera::ucm::UcmModel;
+    /// use fisheye_tools::camera::Resolution;
     ///
     /// let params_vec = DVector::from_vec(vec![
     ///     1313.83, // fx

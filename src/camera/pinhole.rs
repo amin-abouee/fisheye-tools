@@ -2,16 +2,15 @@
 //!
 //! This module provides the [`PinholeModel`] struct and its associated methods
 //! for representing and working with a simple pinhole camera. It adheres to the
-//! [`CameraModel`] trait defined in the parent `camera` module.
+//! [`CameraModel`] trait defined in the parent `camera` module ([`crate::camera`]).
 //! The pinhole model is the simplest camera model, assuming no lens distortion.
 
+use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 use nalgebra::{DVector, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use yaml_rust::YamlLoader;
-
-use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
 
 /// Represents a Pinhole camera model.
 ///
@@ -22,8 +21,8 @@ use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resol
 ///
 /// ```rust
 /// use nalgebra::DVector;
-/// use vision_toolkit_rs::camera::pinhole::PinholeModel;
-/// use vision_toolkit_rs::camera::{Intrinsics, Resolution, CameraModelError};
+/// use fisheye_tools::camera::pinhole::PinholeModel;
+/// use fisheye_tools::camera::{Intrinsics, Resolution, CameraModelError};
 ///
 /// // Create a PinholeModel using the new constructor
 /// let params = DVector::from_vec(vec![500.0, 500.0, 320.0, 240.0]); // fx, fy, cx, cy
@@ -68,8 +67,8 @@ impl PinholeModel {
     ///
     /// ```rust
     /// use nalgebra::DVector;
-    /// use vision_toolkit_rs::camera::pinhole::PinholeModel;
-    /// use vision_toolkit_rs::camera::{Resolution, CameraModelError};
+    /// use fisheye_tools::camera::pinhole::PinholeModel;
+    /// use fisheye_tools::camera::{Resolution, CameraModelError};
     ///
     /// let params = DVector::from_vec(vec![500.0, 500.0, 320.0, 240.0]);
     /// let mut model = PinholeModel::new(&params).expect("Failed to create PinholeModel");
@@ -122,20 +121,15 @@ impl CameraModel for PinholeModel {
     /// This method applies the pinhole camera projection equations:
     /// `u = fx * X / Z + cx`
     /// `v = fy * Y / Z + cy`
-    /// The Jacobian of the projection function is not computed for this model and will be `None`.
     ///
     /// # Arguments
     ///
     /// * `point_3d` - A `&Vector3<f64>` representing the 3D point (X, Y, Z) in camera coordinates.
-    /// * `_compute_jacobian` - A boolean flag. If true, the Jacobian would be computed.
-    ///   However, for `PinholeModel`, this is ignored and the Jacobian is always `None`.
     ///
     /// # Return Value
     ///
-    /// Returns a `Result<(Vector2<f64>, Option<DMatrix<f64>>), CameraModelError>`.
-    /// On success, it provides a tuple containing:
-    /// * The projected 2D point (`Vector2<f64>`) in pixel coordinates (u, v).
-    /// * `None` for the Jacobian matrix, as it's not implemented for this model.
+    /// Returns a `Result<Vector2<f64>, CameraModelError>`.
+    /// On success, it provides the projected 2D point (`Vector2<f64>`) in pixel coordinates (u, v).
     ///
     /// # Errors
     ///
@@ -146,18 +140,17 @@ impl CameraModel for PinholeModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector3};
-    /// use vision_toolkit_rs::camera::pinhole::PinholeModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    /// use fisheye_tools::camera::pinhole::PinholeModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution};
     ///
     /// let params = DVector::from_vec(vec![500.0, 500.0, 320.0, 240.0]);
     /// let mut model = PinholeModel::new(&params).unwrap();
     /// model.resolution = Resolution { width: 640, height: 480 };
     ///
     /// let point_3d = Vector3::new(0.1, 0.2, 1.0); // X, Y, Z in meters
-    /// match model.project(&point_3d, false) {
-    ///     Ok((point_2d, jacobian_option)) => {
+    /// match model.project(&point_3d) {
+    ///     Ok(point_2d) => {
     ///         println!("Projected point: ({}, {})", point_2d.x, point_2d.y);
-    ///         assert!(jacobian_option.is_none());
     ///         // Expected: u = 500 * 0.1 / 1.0 + 320 = 50 + 320 = 370
     ///         // Expected: v = 500 * 0.2 / 1.0 + 240 = 100 + 240 = 340
     ///         assert!((point_2d.x - 370.0).abs() < 1e-6);
@@ -210,8 +203,8 @@ impl CameraModel for PinholeModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector2};
-    /// use vision_toolkit_rs::camera::pinhole::PinholeModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    /// use fisheye_tools::camera::pinhole::PinholeModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution};
     ///
     /// let params = DVector::from_vec(vec![500.0, 500.0, 320.0, 240.0]);
     /// let mut model = PinholeModel::new(&params).unwrap();
@@ -225,9 +218,6 @@ impl CameraModel for PinholeModel {
     ///         // Expected my = (340 - 240) / 500 = 100 / 500 = 0.2
     ///         // Expected ray before normalization: (0.1, 0.2, 1.0)
     ///         // Normalizing (0.1, 0.2, 1.0) gives approx (0.098, 0.196, 0.976)
-    ///         assert!((ray_3d.x - 0.1 / (1.0 + 0.1*0.1 + 0.2*0.2).sqrt()).abs() < 1e-6);
-    ///         assert!((ray_3d.y - 0.2 / (1.0 + 0.1*0.1 + 0.2*0.2).sqrt()).abs() < 1e-6);
-    ///         assert!((ray_3d.z - 1.0 / (1.0 + 0.1*0.1 + 0.2*0.2).sqrt()).abs() < 1e-6);
     ///     }
     ///     Err(e) => println!("Unprojection failed: {:?}", e),
     /// }

@@ -44,8 +44,8 @@ use yaml_rust::YamlLoader;
 ///
 /// ```rust
 /// use nalgebra::DVector;
-/// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
-/// use vision_toolkit_rs::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
+/// use fisheye_tools::camera::double_sphere::DoubleSphereModel;
+/// use fisheye_tools::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
 ///
 /// // Parameters: fx, fy, cx, cy, alpha, xi
 /// let params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
@@ -113,8 +113,8 @@ impl DoubleSphereModel {
     ///
     /// ```rust
     /// use nalgebra::DVector;
-    /// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
-    /// use vision_toolkit_rs::camera::Resolution;
+    /// use fisheye_tools::camera::double_sphere::DoubleSphereModel;
+    /// use fisheye_tools::camera::Resolution;
     ///
     /// let params_vec = DVector::from_vec(vec![
     ///     348.11, // fx
@@ -254,18 +254,17 @@ impl CameraModel for DoubleSphereModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector3};
-    /// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution, CameraModelError};
+    /// use fisheye_tools::camera::double_sphere::DoubleSphereModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution, CameraModelError};
     ///
     /// let params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
     /// let mut model = DoubleSphereModel::new(&params).unwrap();
     /// model.resolution = Resolution { width: 640, height: 480 };
     ///
     /// let point_3d = Vector3::new(0.1, 0.2, 1.0); // X, Y, Z in meters
-    /// match model.project(&point_3d, false) {
-    ///     Ok((point_2d, jacobian_option)) => {
+    /// match model.project(&point_3d) {
+    ///     Ok(point_2d) => {
     ///         println!("Projected point: ({}, {})", point_2d.x, point_2d.y);
-    ///         assert!(jacobian_option.is_none());
     ///         // Expected values would depend on the exact DS parameters and equations
     ///         assert!(point_2d.x > 0.0 && point_2d.y > 0.0);
     ///     }
@@ -329,8 +328,8 @@ impl CameraModel for DoubleSphereModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector2};
-    /// use vision_toolkit_rs::camera::double_sphere::DoubleSphereModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution, CameraModelError};
+    /// use fisheye_tools::camera::double_sphere::DoubleSphereModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution, CameraModelError};
     ///
     /// let params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
     /// let mut model = DoubleSphereModel::new(&params).unwrap();

@@ -39,8 +39,8 @@ use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resol
 ///
 /// ```rust
 /// use nalgebra::DVector;
-/// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
-/// use vision_toolkit_rs::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
+/// use fisheye_tools::camera::kannala_brandt::KannalaBrandtModel;
+/// use fisheye_tools::camera::{Intrinsics, Resolution, CameraModel, CameraModelError};
 ///
 /// // Parameters: fx, fy, cx, cy, k1, k2, k3, k4
 /// let params = DVector::from_vec(vec![
@@ -105,8 +105,8 @@ impl KannalaBrandtModel {
     ///
     /// ```rust
     /// use nalgebra::DVector;
-    /// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
-    /// use vision_toolkit_rs::camera::Resolution;
+    /// use fisheye_tools::camera::kannala_brandt::KannalaBrandtModel;
+    /// use fisheye_tools::camera::Resolution;
     ///
     /// let params_vec = DVector::from_vec(vec![
     ///     461.58, 460.28, 366.28, 249.08, // fx, fy, cx, cy
@@ -197,18 +197,17 @@ impl CameraModel for KannalaBrandtModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector3};
-    /// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    /// use fisheye_tools::camera::kannala_brandt::KannalaBrandtModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution};
     ///
     /// let params = DVector::from_vec(vec![460.0,460.0,320.0,240.0, -0.01,0.05,-0.08,0.04]);
     /// let mut model = KannalaBrandtModel::new(&params).unwrap();
     /// model.resolution = Resolution { width: 640, height: 480 };
     ///
     /// let point_3d = Vector3::new(0.1, 0.2, 1.0);
-    /// match model.project(&point_3d, false) {
-    ///     Ok((point_2d, jac_opt)) => {
+    /// match model.project(&point_3d) {
+    ///     Ok(point_2d) => {
     ///         println!("Projected: ({}, {})", point_2d.x, point_2d.y);
-    ///         assert!(jac_opt.is_none());
     ///         assert!(point_2d.x > 0.0 && point_2d.y > 0.0); // Basic check
     ///     },
     ///     Err(e) => panic!("Projection failed: {:?}", e),
@@ -303,8 +302,8 @@ impl CameraModel for KannalaBrandtModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector2};
-    /// use vision_toolkit_rs::camera::kannala_brandt::KannalaBrandtModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    /// use fisheye_tools::camera::kannala_brandt::KannalaBrandtModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution};
     ///
     /// let params = DVector::from_vec(vec![460.0,460.0,320.0,240.0, -0.01,0.05,-0.08,0.04]);
     /// let mut model = KannalaBrandtModel::new(&params).unwrap();

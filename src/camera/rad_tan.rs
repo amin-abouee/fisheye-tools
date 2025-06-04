@@ -26,8 +26,8 @@ use yaml_rust::YamlLoader;
 ///
 /// ```rust
 /// use nalgebra::DVector;
-/// use vision_toolkit_rs::camera::rad_tan::RadTanModel;
-/// use vision_toolkit_rs::camera::{Intrinsics, Resolution, CameraModelError};
+/// use fisheye_tools::camera::rad_tan::RadTanModel;
+/// use fisheye_tools::camera::{Intrinsics, Resolution, CameraModelError};
 ///
 /// // Create a RadTanModel using the new constructor
 /// // Parameters: fx, fy, cx, cy, k1, k2, p1, p2, k3
@@ -40,7 +40,7 @@ use yaml_rust::YamlLoader;
 /// rad_tan_model.resolution = Resolution { width: 640, height: 480 };
 ///
 /// assert_eq!(rad_tan_model.intrinsics.fx, 500.0);
-/// assert_eq!(rad_tan_model.distortion[0], 0.1); // k1
+/// assert_eq!(rad_tan_model.distortions[0], 0.1); // k1
 /// assert_eq!(rad_tan_model.resolution.width, 640);
 /// ```
 #[derive(Clone, Serialize, Deserialize)]
@@ -89,8 +89,8 @@ impl RadTanModel {
     ///
     /// ```rust
     /// use nalgebra::DVector;
-    /// use vision_toolkit_rs::camera::rad_tan::RadTanModel;
-    /// use vision_toolkit_rs::camera::{Resolution, CameraModelError};
+    /// use fisheye_tools::camera::rad_tan::RadTanModel;
+    /// use fisheye_tools::camera::{Resolution, CameraModelError};
     ///
     /// let params = DVector::from_vec(vec![
     ///     460.0, 460.0, 320.0, 240.0, // fx, fy, cx, cy
@@ -100,7 +100,7 @@ impl RadTanModel {
     /// model.resolution = Resolution { width: 640, height: 480 }; // Set resolution
     ///
     /// assert_eq!(model.intrinsics.fx, 460.0);
-    /// assert_eq!(model.distortion[0], -0.28); // k1
+    /// assert_eq!(model.distortions[0], -0.28); // k1
     /// assert_eq!(model.resolution.width, 640);
     /// ```
     pub fn new(parameters: &DVector<f64>) -> Result<Self, CameraModelError> {
@@ -129,7 +129,7 @@ impl RadTanModel {
     }
 }
 
-/// Provides a debug string representation for [`KannalaBrandtModel`].
+/// Provides a debug string representation for [`RadTanModel`].
 impl fmt::Debug for RadTanModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -174,8 +174,8 @@ impl CameraModel for RadTanModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector3};
-    /// use vision_toolkit_rs::camera::rad_tan::RadTanModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    /// use fisheye_tools::camera::rad_tan::RadTanModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution};
     ///
     /// let params = DVector::from_vec(vec![
     ///     500.0, 500.0, 320.0, 240.0, // Intrinsics
@@ -185,10 +185,9 @@ impl CameraModel for RadTanModel {
     /// model.resolution = Resolution { width: 640, height: 480 };
     ///
     /// let point_3d = Vector3::new(0.1, 0.2, 1.0); // X, Y, Z in meters
-    /// match model.project(&point_3d, false) {
-    ///     Ok((point_2d, jacobian_option)) => {
+    /// match model.project(&point_3d) {
+    ///     Ok(point_2d) => {
     ///         println!("Projected point: ({}, {})", point_2d.x, point_2d.y);
-    ///         assert!(jacobian_option.is_none());
     ///         // Actual values will depend on distortion, this is a basic check
     ///         assert!(point_2d.x > 0.0 && point_2d.y > 0.0);
     ///     }
@@ -271,8 +270,8 @@ impl CameraModel for RadTanModel {
     ///
     /// ```rust
     /// use nalgebra::{DVector, Vector2};
-    /// use vision_toolkit_rs::camera::rad_tan::RadTanModel;
-    /// use vision_toolkit_rs::camera::{CameraModel, Resolution};
+    /// use fisheye_tools::camera::rad_tan::RadTanModel;
+    /// use fisheye_tools::camera::{CameraModel, Resolution};
     ///
     /// let params = DVector::from_vec(vec![
     ///     500.0, 500.0, 320.0, 240.0, // Intrinsics
@@ -642,7 +641,7 @@ impl CameraModel for RadTanModel {
     /// It utilizes `validation::validate_intrinsics` from the parent `camera` module.
     ///
     /// **Note:** Currently, this method does not perform validation specific to the
-    /// `distortion` parameters (e.g., checking for reasonable ranges).
+    /// `distortions` parameters (e.g., checking for reasonable ranges).
     ///
     /// # Return Value
     ///
