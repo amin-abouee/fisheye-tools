@@ -1,32 +1,42 @@
-pub mod camera;
-pub mod geometry;
-pub mod optimization;
+//! Camera Model Conversion Example
+//!
+//! This example demonstrates how to convert between different camera models
+//! using the fisheye-tools library. It supports conversion between:
+//! - Radial-Tangential distortion model
+//! - Double Sphere camera model
+//!
+//! Usage:
+//! ```bash
+//! cargo run --example camera_model_conversion -- \
+//!   --input_model rad_tan \
+//!   --output_model double_sphere \
+//!   --input_path samples/rad_tan.yaml
+//! ```
 
-use crate::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
-use crate::optimization::Optimizer;
+use fisheye_tools::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
+use fisheye_tools::optimization::Optimizer;
+use fisheye_tools::{geometry, optimization};
 use clap::Parser;
 use flexi_logger::{colored_detailed_format, detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
 use optimization::{DoubleSphereOptimizationCost, RadTanOptimizationCost};
-use std::path::PathBuf; // Use PathBuf for paths
+use std::path::PathBuf;
 
-/// Simple program to demonstrate reading input/output model paths from args
+/// Camera model conversion tool
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)] // Adds version, author, about from Cargo.toml
+#[command(author, version, about, long_about = None)]
 struct Cli {
     /// Type of the input camera model
     #[arg(short = 'i', long)]
-    // Defines a required arg: -i <MODEL_TYPE> or --input_model <MODEL_TYPE>
     input_model: String,
 
     /// Type of the output camera model
     #[arg(short = 'o', long)]
-    // Defines a required arg: -o <MODEL_TYPE> or --output_model <MODEL_TYPE>
     output_model: String,
 
     /// Path to the input model file
-    #[arg(short = 'p', long)] // Defines a required arg: -p <PATH> or --input_path <PATH>
+    #[arg(short = 'p', long)]
     input_path: PathBuf,
 }
 
@@ -113,6 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 196=bright red, 208=orange, 76=green, 39=cyan, 178=gold
         .set_palette("196;208;76;39;178".to_string())
         .start()?;
+    
     // Parse the command line arguments into the Cli struct
     // clap automatically handles errors (e.g., missing args) and --help / --version
     let cli = Cli::parse();
@@ -164,28 +175,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Distortion: {:?}", output_model.get_distortion());
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::camera::{CameraModel, DoubleSphereModel, RadTanModel};
-    use nalgebra::Vector3;
-
-    #[test]
-    fn test_radtan_camera() {
-        let model = RadTanModel::load_from_yaml("samples/rad_tan.yaml").unwrap();
-        let point_3d = Vector3::new(1.0, 1.0, 3.0);
-        let point_2d = model.project(&point_3d).unwrap();
-        assert!(point_2d.x > 0.0);
-        assert!(point_2d.y > 0.0);
-    }
-
-    #[test]
-    fn test_double_sphere_camera() {
-        let model = DoubleSphereModel::load_from_yaml("samples/double_sphere.yaml").unwrap();
-        let point_3d = Vector3::new(1.0, 1.0, 3.0);
-        let point_2d = model.project(&point_3d).unwrap();
-        assert!(point_2d.x > 0.0);
-        assert!(point_2d.y > 0.0);
-    }
 }
