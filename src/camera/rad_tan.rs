@@ -569,12 +569,12 @@ impl CameraModel for RadTanModel {
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         // Create the YAML structure using serde_yaml
         let yaml =
-            serde_yaml::to_value(&serde_yaml::Mapping::from_iter(
+            serde_yaml::to_value(serde_yaml::Mapping::from_iter(
                 [
                     (
                         serde_yaml::Value::String("cam0".to_string()),
                         serde_yaml::to_value(
-                            &serde_yaml::Mapping::from_iter(
+                            serde_yaml::Mapping::from_iter(
                                 [
                                     (
                                         serde_yaml::Value::String("camera_model".to_string()),

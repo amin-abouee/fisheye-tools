@@ -6,7 +6,7 @@
 //! camera model with the optimization framework.
 
 use crate::camera::{CameraModel, CameraModelError, RadTanModel};
-use crate::optimization::{Optimizer};
+use crate::optimization::Optimizer;
 use factrs::{
     assign_symbols,
     core::{Graph, Huber, LevenMarquardt, Values},
@@ -24,6 +24,7 @@ use nalgebra::{Matrix2xX, Matrix3xX, Vector2, Vector3};
 pub type VectorVar9<T = dtype> = VectorVar<9, T>;
 
 // Helper function to create VectorVar9 instances since we can't implement methods for foreign types
+#[allow(clippy::too_many_arguments)]
 fn create_vector_var9<T: Numeric>(
     fx: T,
     fy: T,
@@ -166,12 +167,8 @@ impl Residual1 for RadTanFactrsResidual {
         };
 
         // Convert input points to f64 for projection
-        let point3d_f64 = Vector3::new(
-            self.point3d.x as f64,
-            self.point3d.y as f64,
-            self.point3d.z as f64,
-        );
-        let point2d_f64 = Vector2::new(self.point2d.x as f64, self.point2d.y as f64);
+        let point3d_f64 = Vector3::new(self.point3d.x, self.point3d.y, self.point3d.z);
+        let point2d_f64 = Vector2::new(self.point2d.x, self.point2d.y);
 
         // Use the existing RadTanModel::project method
         match model.project(&point3d_f64) {
@@ -282,15 +279,15 @@ impl Optimizer for RadTanOptimizationCost {
         let params = &optimized_params.0;
 
         // Update the model parameters
-        self.model.intrinsics.fx = params[0] as f64;
-        self.model.intrinsics.fy = params[1] as f64;
-        self.model.intrinsics.cx = params[2] as f64;
-        self.model.intrinsics.cy = params[3] as f64;
-        self.model.distortions[0] = params[4] as f64; // k1
-        self.model.distortions[1] = params[5] as f64; // k2
-        self.model.distortions[2] = params[6] as f64; // p1
-        self.model.distortions[3] = params[7] as f64; // p2
-        self.model.distortions[4] = params[8] as f64; // k3
+        self.model.intrinsics.fx = params[0];
+        self.model.intrinsics.fy = params[1];
+        self.model.intrinsics.cx = params[2];
+        self.model.intrinsics.cy = params[3];
+        self.model.distortions[0] = params[4]; // k1
+        self.model.distortions[1] = params[5]; // k2
+        self.model.distortions[2] = params[6]; // p1
+        self.model.distortions[3] = params[7]; // p2
+        self.model.distortions[4] = params[8]; // k3
 
         // Validate the optimized parameters
         self.model.validate_params()?;

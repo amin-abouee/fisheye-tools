@@ -322,24 +322,21 @@ impl CameraModel for UcmModel {
 
         let doc = &docs[0];
 
-        let intrinsics_yaml_vec = doc["cam0"]["intrinsics"]
-            .as_vec()
-            .ok_or_else(|| {
-                CameraModelError::InvalidParams(
-                    "YAML missing 'intrinsics' array under 'cam0'".to_string(),
-                )
-            })?;
-        let resolution_yaml_vec = doc["cam0"]["resolution"]
-            .as_vec()
-            .ok_or_else(|| {
-                CameraModelError::InvalidParams(
-                    "YAML missing 'resolution' array under 'cam0'".to_string(),
-                )
-            })?;
+        let intrinsics_yaml_vec = doc["cam0"]["intrinsics"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams(
+                "YAML missing 'intrinsics' array under 'cam0'".to_string(),
+            )
+        })?;
+        let resolution_yaml_vec = doc["cam0"]["resolution"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams(
+                "YAML missing 'resolution' array under 'cam0'".to_string(),
+            )
+        })?;
 
         if intrinsics_yaml_vec.len() < 5 {
             return Err(CameraModelError::InvalidParams(
-                "Intrinsics array in YAML must have at least 5 elements (fx, fy, cx, cy, alpha)".to_string()
+                "Intrinsics array in YAML must have at least 5 elements (fx, fy, cx, cy, alpha)"
+                    .to_string(),
             ));
         }
 
@@ -410,9 +407,9 @@ impl CameraModel for UcmModel {
     /// * [`CameraModelError::IOError`]: If there's an issue creating or writing to the file.
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         // Create the YAML structure using serde_yaml
-        let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
+        let yaml = serde_yaml::to_value(serde_yaml::Mapping::from_iter([(
             serde_yaml::Value::String("cam0".to_string()),
-            serde_yaml::to_value(&serde_yaml::Mapping::from_iter([
+            serde_yaml::to_value(serde_yaml::Mapping::from_iter([
                 (
                     serde_yaml::Value::String("camera_model".to_string()),
                     serde_yaml::Value::String("ucm".to_string()),
@@ -530,8 +527,6 @@ mod tests {
         }
     }
 
-
-
     /// Tests loading [`UcmModel`] parameters from "samples/ucm.yaml".
     #[test]
     fn test_ucm_load_from_yaml() {
@@ -599,7 +594,10 @@ mod tests {
 
         // Debug print the projected coordinates
         println!("Projected point: ({}, {})", point_2d.x, point_2d.y);
-        println!("Image bounds: {}x{}", model.resolution.width, model.resolution.height);
+        println!(
+            "Image bounds: {}x{}",
+            model.resolution.width, model.resolution.height
+        );
 
         // Check if the pixel coordinates are finite
         assert!(point_2d.x.is_finite() && point_2d.y.is_finite());
@@ -734,6 +732,4 @@ mod tests {
         assert_eq!(distortion.len(), 1);
         assert_relative_eq!(distortion[0], model.alpha);
     }
-
-
 }

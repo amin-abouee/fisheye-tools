@@ -236,8 +236,8 @@ impl CameraModel for PinholeModel {
 
         let r2: f64 = mx * mx + my * my;
 
-        let norm: f64 = (1.0 as f64 + r2).sqrt();
-        let norm_inv: f64 = 1.0 as f64 / norm;
+        let norm: f64 = (1.0_f64 + r2).sqrt();
+        let norm_inv: f64 = 1.0_f64 / norm;
 
         Ok(Vector3::new(mx * norm_inv, my * norm_inv, norm_inv))
     }
@@ -338,9 +338,9 @@ impl CameraModel for PinholeModel {
     /// * [`PinholeModel::load_from_yaml()`]
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         // Create the YAML structure using serde_yaml
-        let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
+        let yaml = serde_yaml::to_value(serde_yaml::Mapping::from_iter([(
             serde_yaml::Value::String("cam0".to_string()),
-            serde_yaml::to_value(&serde_yaml::Mapping::from_iter([
+            serde_yaml::to_value(serde_yaml::Mapping::from_iter([
                 (
                     serde_yaml::Value::String("camera_model".to_string()),
                     serde_yaml::Value::String("pinhole".to_string()),

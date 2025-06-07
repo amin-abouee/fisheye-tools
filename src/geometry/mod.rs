@@ -18,18 +18,22 @@ pub enum GeometryError {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ProjectionError  {
+pub struct ProjectionError {
     pub rmse: f64,
     pub min: f64,
     pub max: f64,
     pub mean: f64,
-    pub stddev: f64, 
+    pub stddev: f64,
     pub median: f64,
 }
 
-impl fmt::Debug for ProjectionError  {
+impl fmt::Debug for ProjectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Projection Error [ rmse: {}, min: {}, max: {}, mean: {}, stddev: {}, median: {} ]", self.rmse, self.min, self.max, self.mean, self.stddev, self.median)
+        write!(
+            f,
+            "Projection Error [ rmse: {}, min: {}, max: {}, mean: {}, stddev: {}, median: {} ]",
+            self.rmse, self.min, self.max, self.mean, self.stddev, self.median
+        )
     }
 }
 
@@ -42,7 +46,7 @@ impl fmt::Debug for ProjectionError  {
 /// * `height` - The height of the image in pixels
 /// * `n` - The approximate number of points to generate
 /// * `camera_model` - Camera model to use for unprojection. If None, 3D points will be
-///                   on a plane at z=1.0
+///   on a plane at z=1.0
 ///
 /// # Returns
 ///
@@ -118,8 +122,8 @@ where
         .zip(valid_3d_points.iter())
         .enumerate()
     {
-        points_2d_result.set_column(idx, &p2d);
-        points_3d_result.set_column(idx, &p3d);
+        points_2d_result.set_column(idx, p2d);
+        points_3d_result.set_column(idx, p3d);
     }
 
     Ok((points_2d_result, points_3d_result))
@@ -153,19 +157,19 @@ where
     let n = errors.len() as f64;
     let sum: f64 = errors.iter().sum::<f64>();
     let mean = sum / n;
-    
+
     // Calculate variance and standard deviation
     let variance: f64 = errors.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
     let stddev = variance.sqrt();
-    
+
     // Calculate RMSE
     let sum_squared: f64 = errors.iter().map(|x| x.powi(2)).sum::<f64>();
     let rmse = (sum_squared / n).sqrt();
-    
+
     // Find min and max
     let min = errors.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let max = errors.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-    
+
     // Calculate median
     let mut sorted_errors = errors.clone();
     sorted_errors.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -195,7 +199,7 @@ mod tests {
     fn test_sample_points() {
         let input_path = "samples/double_sphere.yaml";
         let camera_model = DoubleSphereModel::load_from_yaml(input_path).unwrap();
-        let n = 100 as usize;
+        let n = 100_usize;
         let (points_2d, points_3d) = sample_points(Some(&camera_model), n).unwrap();
 
         // Check that we have some valid points

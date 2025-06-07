@@ -63,11 +63,7 @@ impl UcmOptimizationCost {
     /// # Returns
     ///
     /// A new `UcmOptimizationCost` instance.
-    pub fn new(
-        model: UcmModel,
-        points3d: Matrix3xX<f64>,
-        points2d: Matrix2xX<f64>,
-    ) -> Self {
+    pub fn new(model: UcmModel, points3d: Matrix3xX<f64>, points2d: Matrix2xX<f64>) -> Self {
         Self {
             model,
             points3d,
@@ -133,13 +129,13 @@ impl UcmFactrsResidual {
         let alpha = cam_params[4];
 
         // gt_u_ and gt_v_ correspond to observed 2D point coordinates
-        let gt_u = self.point2d.x as f64;
-        let gt_v = self.point2d.y as f64;
+        let gt_u = self.point2d.x;
+        let gt_v = self.point2d.y;
 
         // obs_x_, obs_y_, obs_z_ correspond to 3D point coordinates
-        let obs_x = self.point3d.x as f64;
-        let obs_y = self.point3d.y as f64;
-        let obs_z = self.point3d.z as f64;
+        let obs_x = self.point3d.x;
+        let obs_y = self.point3d.y;
+        let obs_z = self.point3d.z;
 
         let u_cx = gt_u - cx;
         let v_cy = gt_v - cy;
@@ -152,25 +148,22 @@ impl UcmFactrsResidual {
         }
 
         // Residual computation based on C++ implementation
-        let residual = Vector2::new(
-            fx * obs_x - u_cx * denom,
-            fy * obs_y - v_cy * denom,
-        );
+        let residual = Vector2::new(fx * obs_x - u_cx * denom, fy * obs_y - v_cy * denom);
 
         // Compute analytical Jacobian
         let mut jacobian = DMatrix::zeros(2, 5); // 2 outputs, 5 parameters (fx,fy,cx,cy,alpha)
 
         // Jacobian computation based on C++ implementation
-        jacobian[(0, 0)] = obs_x;                    // ∂residual_x / ∂fx
-        jacobian[(1, 0)] = 0.0;                      // ∂residual_y / ∂fx
-        jacobian[(0, 1)] = 0.0;                      // ∂residual_x / ∂fy
-        jacobian[(1, 1)] = obs_y;                    // ∂residual_y / ∂fy
-        jacobian[(0, 2)] = denom;                    // ∂residual_x / ∂cx
-        jacobian[(1, 2)] = 0.0;                      // ∂residual_y / ∂cx
-        jacobian[(0, 3)] = 0.0;                      // ∂residual_x / ∂cy
-        jacobian[(1, 3)] = denom;                    // ∂residual_y / ∂cy
-        jacobian[(0, 4)] = (obs_z - d) * u_cx;      // ∂residual_x / ∂alpha
-        jacobian[(1, 4)] = (obs_z - d) * v_cy;      // ∂residual_y / ∂alpha
+        jacobian[(0, 0)] = obs_x; // ∂residual_x / ∂fx
+        jacobian[(1, 0)] = 0.0; // ∂residual_y / ∂fx
+        jacobian[(0, 1)] = 0.0; // ∂residual_x / ∂fy
+        jacobian[(1, 1)] = obs_y; // ∂residual_y / ∂fy
+        jacobian[(0, 2)] = denom; // ∂residual_x / ∂cx
+        jacobian[(1, 2)] = 0.0; // ∂residual_y / ∂cx
+        jacobian[(0, 3)] = 0.0; // ∂residual_x / ∂cy
+        jacobian[(1, 3)] = denom; // ∂residual_y / ∂cy
+        jacobian[(0, 4)] = (obs_z - d) * u_cx; // ∂residual_x / ∂alpha
+        jacobian[(1, 4)] = (obs_z - d) * v_cy; // ∂residual_y / ∂alpha
 
         Ok((residual, jacobian))
     }
@@ -208,17 +201,16 @@ impl Residual1 for UcmFactrsResidual {
         // Create a temporary UCM model with current parameters
         let temp_model = UcmModel {
             intrinsics: crate::camera::Intrinsics { fx, fy, cx, cy },
-            resolution: crate::camera::Resolution { width: 640, height: 480 }, // Dummy resolution
+            resolution: crate::camera::Resolution {
+                width: 640,
+                height: 480,
+            }, // Dummy resolution
             alpha,
         };
 
         // Convert 3D point to f64
-        let point3d_f64 = Vector3::new(
-            self.point3d.x as f64,
-            self.point3d.y as f64,
-            self.point3d.z as f64,
-        );
-        let point2d_f64 = Vector2::new(self.point2d.x as f64, self.point2d.y as f64);
+        let point3d_f64 = Vector3::new(self.point3d.x, self.point3d.y, self.point3d.z);
+        let point2d_f64 = Vector2::new(self.point2d.x, self.point2d.y);
 
         // Use the existing UcmModel::project method
         match temp_model.project(&point3d_f64) {
@@ -382,11 +374,11 @@ impl Optimizer for UcmOptimizationCost {
         let params = &optimized_params.0;
 
         // Update the model parameters
-        self.model.intrinsics.fx = params[0] as f64;
-        self.model.intrinsics.fy = params[1] as f64;
-        self.model.intrinsics.cx = params[2] as f64;
-        self.model.intrinsics.cy = params[3] as f64;
-        self.model.alpha = params[4] as f64;
+        self.model.intrinsics.fx = params[0];
+        self.model.intrinsics.fy = params[1];
+        self.model.intrinsics.cx = params[2];
+        self.model.intrinsics.cy = params[3];
+        self.model.alpha = params[4];
 
         // Validate the optimized parameters
         self.model.validate_params()?;
@@ -451,10 +443,11 @@ impl Optimizer for UcmOptimizationCost {
 
         // Solve the linear system using SVD
         let svd = a_matrix.svd(true, true);
-        let solution = svd.solve(&b_vector, 1e-6)
-            .map_err(|_| CameraModelError::NumericalError(
+        let solution = svd.solve(&b_vector, 1e-6).map_err(|_| {
+            CameraModelError::NumericalError(
                 "Failed to solve linear system for alpha estimation".to_string(),
-            ))?;
+            )
+        })?;
 
         let estimated_alpha = solution[0];
 
@@ -502,7 +495,10 @@ mod tests {
     }
 
     /// Helper function to generate sample 3D-2D point correspondences.
-    fn generate_sample_points(model: &UcmModel, num_points: usize) -> (Matrix3xX<f64>, Matrix2xX<f64>) {
+    fn generate_sample_points(
+        model: &UcmModel,
+        num_points: usize,
+    ) -> (Matrix3xX<f64>, Matrix2xX<f64>) {
         let mut points_3d = Matrix3xX::zeros(num_points);
         let mut points_2d = Matrix2xX::zeros(num_points);
 
@@ -577,7 +573,12 @@ mod tests {
         // Check that all Jacobian elements are finite
         for i in 0..jacobian.nrows() {
             for j in 0..jacobian.ncols() {
-                assert!(jacobian[(i, j)].is_finite(), "Jacobian element ({}, {}) is not finite", i, j);
+                assert!(
+                    jacobian[(i, j)].is_finite(),
+                    "Jacobian element ({}, {}) is not finite",
+                    i,
+                    j
+                );
             }
         }
     }

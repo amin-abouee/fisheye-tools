@@ -3,13 +3,13 @@
 //! This module implements the Extended Unified Camera Model (EUCM), which extends
 //! the Unified Camera Model (UCM) with an additional parameter for better modeling
 //! of wide-angle and fisheye cameras. The model uses two parameters (alpha, beta)
-//! to handle the distortion characteristics of such cameras. It adheres to the 
+//! to handle the distortion characteristics of such cameras. It adheres to the
 //! [`CameraModel`] trait defined in the parent `camera` module ([`crate::camera`]).
 //!
 //! # References
 //!
 //! The Extended Unified Camera Model is based on:
-//! "A Generic Camera Model and Calibration Method for Conventional, Wide-Angle, 
+//! "A Generic Camera Model and Calibration Method for Conventional, Wide-Angle,
 //! and Fish-Eye Lenses" by Bogdan Khomutenko, Gaëtan Garcia, and Philippe Martinet.
 
 use crate::camera::{validation, CameraModel, CameraModelError, Intrinsics, Resolution};
@@ -40,8 +40,8 @@ use yaml_rust::YamlLoader;
 ///
 /// # References
 ///
-/// *   Khomutenko, B., Garcia, G., & Martinet, P. (2015). A generic camera model and 
-///     calibration method for conventional, wide-angle, and fish-eye lenses. 
+/// *   Khomutenko, B., Garcia, G., & Martinet, P. (2015). A generic camera model and
+///     calibration method for conventional, wide-angle, and fish-eye lenses.
 ///     In *IEEE Transactions on Pattern Analysis and Machine Intelligence*.
 ///
 /// # Examples
@@ -190,10 +190,8 @@ impl EucmModel {
     /// Returns `true` if the point satisfies the unprojection condition, `false` otherwise.
     fn check_unproj_condition(r_squared: f64, alpha: f64, beta: f64) -> bool {
         let mut condition = true;
-        if alpha > 0.5 {
-            if r_squared > (1.0 / beta * (2.0 * alpha - 1.0)) {
-                condition = false;
-            }
+        if alpha > 0.5 && r_squared > (1.0 / beta * (2.0 * alpha - 1.0)) {
+            condition = false;
         }
         condition
     }
@@ -344,20 +342,16 @@ impl CameraModel for EucmModel {
 
         let doc = &docs[0];
 
-        let intrinsics_yaml_vec = doc["cam0"]["intrinsics"]
-            .as_vec()
-            .ok_or_else(|| {
-                CameraModelError::InvalidParams(
-                    "YAML missing 'intrinsics' array under 'cam0'".to_string(),
-                )
-            })?;
-        let resolution_yaml_vec = doc["cam0"]["resolution"]
-            .as_vec()
-            .ok_or_else(|| {
-                CameraModelError::InvalidParams(
-                    "YAML missing 'resolution' array under 'cam0'".to_string(),
-                )
-            })?;
+        let intrinsics_yaml_vec = doc["cam0"]["intrinsics"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams(
+                "YAML missing 'intrinsics' array under 'cam0'".to_string(),
+            )
+        })?;
+        let resolution_yaml_vec = doc["cam0"]["resolution"].as_vec().ok_or_else(|| {
+            CameraModelError::InvalidParams(
+                "YAML missing 'resolution' array under 'cam0'".to_string(),
+            )
+        })?;
 
         if intrinsics_yaml_vec.len() < 6 {
             return Err(CameraModelError::InvalidParams(
@@ -437,9 +431,9 @@ impl CameraModel for EucmModel {
     /// * [`CameraModelError::IOError`]: If there's an issue creating or writing to the file.
     fn save_to_yaml(&self, path: &str) -> Result<(), CameraModelError> {
         // Create the YAML structure using serde_yaml
-        let yaml = serde_yaml::to_value(&serde_yaml::Mapping::from_iter([(
+        let yaml = serde_yaml::to_value(serde_yaml::Mapping::from_iter([(
             serde_yaml::Value::String("cam0".to_string()),
-            serde_yaml::to_value(&serde_yaml::Mapping::from_iter([
+            serde_yaml::to_value(serde_yaml::Mapping::from_iter([
                 (
                     serde_yaml::Value::String("camera_model".to_string()),
                     serde_yaml::Value::String("eucm".to_string()),
@@ -580,7 +574,10 @@ mod tests {
 
         // Debug print the projected coordinates
         println!("Projected point: ({}, {})", point_2d.x, point_2d.y);
-        println!("Image bounds: {}x{}", model.resolution.width, model.resolution.height);
+        println!(
+            "Image bounds: {}x{}",
+            model.resolution.width, model.resolution.height
+        );
 
         // Check if the pixel coordinates are finite
         assert!(point_2d.x.is_finite() && point_2d.y.is_finite());

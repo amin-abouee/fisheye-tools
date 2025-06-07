@@ -32,12 +32,12 @@ pub use ucm::UcmOptimizationCost;
 use crate::camera::{CameraModelError, Intrinsics, Resolution};
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ProjectionError  {
+pub struct ProjectionError {
     pub rmse: f64,
     pub min: f64,
     pub max: f64,
     pub mean: f64,
-    pub stddev: f64, 
+    pub stddev: f64,
     pub median: f64,
 }
 
@@ -46,7 +46,7 @@ pub struct ProjectionError  {
 /// Types implementing `Optimizer` are responsible for refining the parameters
 /// of a specific camera model. This typically involves minimizing the
 /// reprojection error given a set of 3D-2D point correspondences.
-/// 
+///
 pub trait Optimizer {
     /// Performs non-linear optimization to refine the camera model parameters.
     ///
@@ -80,7 +80,7 @@ pub trait Optimizer {
     ///   model parameters have been updated.
     /// * `Err(CameraModelError)` - If an error occurred, such as insufficient
     ///   data or numerical issues.
-    fn linear_estimation(&mut self,) -> Result<(), CameraModelError>
+    fn linear_estimation(&mut self) -> Result<(), CameraModelError>
     where
         Self: Sized;
 

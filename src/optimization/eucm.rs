@@ -51,11 +51,7 @@ impl EucmOptimizationCost {
     /// # Returns
     ///
     /// A new `EucmOptimizationCost` instance ready for optimization.
-    pub fn new(
-        model: EucmModel,
-        points3d: Matrix3xX<f64>,
-        points2d: Matrix2xX<f64>,
-    ) -> Self {
+    pub fn new(model: EucmModel, points3d: Matrix3xX<f64>, points2d: Matrix2xX<f64>) -> Self {
         Self {
             model,
             points3d,
@@ -97,8 +93,6 @@ impl EucmFactrsResidual {
             point2d: point2d.cast::<dtype>(),
         }
     }
-
-
 }
 
 // Mark this residual for factrs serialization and other features
@@ -140,7 +134,10 @@ impl Residual1 for EucmFactrsResidual {
                 cx: cx_f64,
                 cy: cy_f64,
             },
-            resolution: crate::camera::Resolution { width: 0, height: 0 }, // Not used in projection
+            resolution: crate::camera::Resolution {
+                width: 0,
+                height: 0,
+            }, // Not used in projection
             alpha: alpha_f64,
             beta: beta_f64,
         };
@@ -242,12 +239,12 @@ impl Optimizer for EucmOptimizationCost {
         let params = &optimized_params.0;
 
         // Update the model parameters
-        self.model.intrinsics.fx = params[0] as f64;
-        self.model.intrinsics.fy = params[1] as f64;
-        self.model.intrinsics.cx = params[2] as f64;
-        self.model.intrinsics.cy = params[3] as f64;
-        self.model.alpha = params[4] as f64;
-        self.model.beta = params[5] as f64;
+        self.model.intrinsics.fx = params[0];
+        self.model.intrinsics.fy = params[1];
+        self.model.intrinsics.cx = params[2];
+        self.model.intrinsics.cy = params[3];
+        self.model.alpha = params[4];
+        self.model.beta = params[5];
 
         // Validate the optimized parameters
         self.model.validate_params()?;

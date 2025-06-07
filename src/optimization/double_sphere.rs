@@ -6,8 +6,8 @@
 //! camera model with the optimization framework.
 
 use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
-use crate::optimization::{Optimizer};
 use crate::geometry::compute_reprojection_error;
+use crate::optimization::Optimizer;
 use factrs::{
     assign_symbols,
     core::{Graph, Huber, LevenMarquardt, Values},
@@ -374,7 +374,9 @@ impl Optimizer for DoubleSphereOptimizationCost {
             ));
         }
 
-        if let Ok(error_statistic) = compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d){
+        if let Ok(error_statistic) =
+            compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d)
+        {
             info!("Before Optimization: {:?}", error_statistic);
         }
 
@@ -435,17 +437,19 @@ impl Optimizer for DoubleSphereOptimizationCost {
         let params = &optimized_params.0;
 
         // Update the model parameters
-        self.model.intrinsics.fx = params[0] as f64;
-        self.model.intrinsics.fy = params[1] as f64;
-        self.model.intrinsics.cx = params[2] as f64;
-        self.model.intrinsics.cy = params[3] as f64;
-        self.model.alpha = params[4] as f64;
-        self.model.xi = params[5] as f64;
+        self.model.intrinsics.fx = params[0];
+        self.model.intrinsics.fy = params[1];
+        self.model.intrinsics.cx = params[2];
+        self.model.intrinsics.cy = params[3];
+        self.model.alpha = params[4];
+        self.model.xi = params[5];
 
         // Validate the optimized parameters
         self.model.validate_params()?;
 
-        if let Ok(error_statistic) = compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d){
+        if let Ok(error_statistic) =
+            compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d)
+        {
             info!("After Optimization: {:?}", error_statistic);
         }
 

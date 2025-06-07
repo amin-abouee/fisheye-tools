@@ -171,8 +171,8 @@ impl CameraModel for KannalaBrandtModel {
     /// 2.  Calculates `theta = atan2(r, z)`.
     /// 3.  Applies the polynomial distortion model: `theta_d = theta * (1 + k1*theta^2 + k2*theta^4 + k3*theta^6 + k4*theta^8)`.
     /// 4.  Projects to image plane: `u = fx * theta_d * (x/r) + cx`, `v = fy * theta_d * (y/r) + cy`.
-    /// The Jacobian can optionally be computed with respect to the 8 model parameters
-    /// (fx, fy, cx, cy, k1, k2, k3, k4).
+    ///     The Jacobian can optionally be computed with respect to the 8 model parameters
+    ///     (fx, fy, cx, cy, k1, k2, k3, k4).
     ///
     /// # Arguments
     ///
@@ -320,14 +320,14 @@ impl CameraModel for KannalaBrandtModel {
     /// ```
     fn unproject(&self, point_2d: &Vector2<f64>) -> Result<Vector3<f64>, CameraModelError> {
         // Check if point is outside resolution, if resolution is set
-        if self.resolution.width > 0 && self.resolution.height > 0 {
-            if point_2d.x < 0.0
+        if self.resolution.width > 0
+            && self.resolution.height > 0
+            && (point_2d.x < 0.0
                 || point_2d.x >= self.resolution.width as f64
                 || point_2d.y < 0.0
-                || point_2d.y >= self.resolution.height as f64
-            {
-                return Err(CameraModelError::PointIsOutSideImage);
-            }
+                || point_2d.y >= self.resolution.height as f64)
+        {
+            return Err(CameraModelError::PointIsOutSideImage);
         }
 
         let u = point_2d.x;

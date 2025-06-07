@@ -6,7 +6,7 @@
 //! camera model with the optimization framework.
 
 use crate::camera::{CameraModel, CameraModelError, KannalaBrandtModel};
-use crate::optimization::{Optimizer};
+use crate::optimization::Optimizer;
 use factrs::{
     assign_symbols,
     core::{Graph, Huber, LevenMarquardt, Values},
@@ -24,6 +24,7 @@ use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
 pub type VectorVar8<T = dtype> = VectorVar<8, T>;
 
 // Helper function to create VectorVar8 instances since we can't implement methods for foreign types
+#[allow(clippy::too_many_arguments)]
 fn create_vector_var8<T: Numeric>(x: T, y: T, z: T, w: T, a: T, b: T, c: T, d: T) -> VectorVar8<T> {
     use factrs::linalg::{Vector, VectorX};
     // Create a VectorX first, then convert to fixed-size Vector
@@ -222,12 +223,8 @@ impl Residual1 for KannalaBrandtFactrsResidual {
         };
 
         // Convert input points to f64 for projection
-        let point3d_f64 = Vector3::new(
-            self.point3d.x as f64,
-            self.point3d.y as f64,
-            self.point3d.z as f64,
-        );
-        let point2d_f64 = Vector2::new(self.point2d.x as f64, self.point2d.y as f64);
+        let point3d_f64 = Vector3::new(self.point3d.x, self.point3d.y, self.point3d.z);
+        let point2d_f64 = Vector2::new(self.point2d.x, self.point2d.y);
 
         // Use the existing KannalaBrandtModel::project method
         match model.project(&point3d_f64) {
