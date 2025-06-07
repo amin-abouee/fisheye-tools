@@ -10,48 +10,74 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  format_and_lint:
+    name: Format and Lint
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Check formatting
+      run: cargo fmt --all --check
+
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
   build_and_test:
-    name: Build and Test on ${{ matrix.os }}
+    name: Build and Test on ${{ matrix.os }} with Rust ${{ matrix.rust }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, macos-latest]
+        os: [ubuntu-22.04, ubuntu-24.04, macos-latest, windows-latest]
+        rust: [stable, beta]
+        exclude:
+          # Reduce CI load by excluding some combinations
+          - os: ubuntu-24.04
+            rust: beta
+          - os: windows-latest
+            rust: beta
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: stable
-        override: true
+        toolchain: ${{ matrix.rust }}
 
     - name: Cache Cargo registry
       uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-registry-
+          ${{ runner.os }}-${{ matrix.rust }}-cargo-registry-
 
     - name: Cache Cargo index
       uses: actions/cache@v4
       with:
         path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-index-
+          ${{ runner.os }}-${{ matrix.rust }}-cargo-index-
 
     - name: Cache Cargo build
       uses: actions/cache@v4
       with:
         path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-build-target-
+          ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-
 
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --verbose --all-features
 
     - name: Run tests
-      run: cargo test --verbose 
+      run: cargo test --verbose --all-features
+
+    - name: Run doc tests
+      run: cargo test --doc --verbose
