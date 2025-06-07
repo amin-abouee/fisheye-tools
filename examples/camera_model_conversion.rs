@@ -13,10 +13,10 @@
 //!   --input_path samples/rad_tan.yaml
 //! ```
 
+use clap::Parser;
 use fisheye_tools::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
 use fisheye_tools::optimization::Optimizer;
 use fisheye_tools::{geometry, optimization};
-use clap::Parser;
 use flexi_logger::{colored_detailed_format, detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 196=bright red, 208=orange, 76=green, 39=cyan, 178=gold
         .set_palette("196;208;76;39;178".to_string())
         .start()?;
-    
+
     // Parse the command line arguments into the Cli struct
     // clap automatically handles errors (e.g., missing args) and --help / --version
     let cli = Cli::parse();
@@ -134,7 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Input Path: {:?}", cli.input_path);
 
     // Convert PathBuf to &str for loading functions
-    let n = 500 as usize;
+    let n = 500_usize;
     let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
     let input_model_type = cli.input_model.as_str();
     let input_model = create_input_model(input_model_type, input_path_str)?;
