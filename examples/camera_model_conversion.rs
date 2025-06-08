@@ -4,23 +4,28 @@
 //! using the fisheye-tools library. It supports conversion between:
 //! - Radial-Tangential distortion model
 //! - Double Sphere camera model
+//! - Kannala-Brandt camera model
 //!
 //! Usage:
 //! ```bash
 //! cargo run --example camera_model_conversion -- \
-//!   --input_model rad_tan \
+//!   --input_model kannala_brandt \
 //!   --output_model double_sphere \
-//!   --input_path samples/rad_tan.yaml
+//!   --input_path samples/kannala_brandt.yaml
 //! ```
 
 use clap::Parser;
-use fisheye_tools::camera::{CameraModel, DoubleSphereModel, Intrinsics, RadTanModel, Resolution};
+use fisheye_tools::camera::{
+    CameraModel, DoubleSphereModel, Intrinsics, KannalaBrandtModel, RadTanModel, Resolution,
+};
 use fisheye_tools::optimization::Optimizer;
 use fisheye_tools::{geometry, optimization};
 use flexi_logger::{colored_detailed_format, detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
-use optimization::{DoubleSphereOptimizationCost, RadTanOptimizationCost};
+use optimization::{
+    DoubleSphereOptimizationCost, KannalaBrandtOptimizationCost, RadTanOptimizationCost,
+};
 use std::path::PathBuf;
 
 /// Camera model conversion tool
@@ -52,6 +57,10 @@ fn create_input_model(
         "double_sphere" => {
             info!("Successfully loaded input model: DoubleSphere");
             Box::new(DoubleSphereModel::load_from_yaml(input_path)?)
+        }
+        "kannala_brandt" => {
+            info!("Successfully loaded input model: KannalaBrandt");
+            Box::new(KannalaBrandtModel::load_from_yaml(input_path)?)
         }
         _ => {
             error!("Unsupported input model type: {}", input_model_type);
@@ -89,6 +98,17 @@ fn create_output_model(
                 xi: 0.1,    // Small positive initial value
             };
             let mut cost_model = DoubleSphereOptimizationCost::new(model, points_3d, points_2d);
+            cost_model.linear_estimation()?;
+            Box::new(cost_model)
+        }
+        "kannala_brandt" => {
+            info!("Estimated init params: KannalaBrandt");
+            let model = KannalaBrandtModel {
+                intrinsics: input_intrinsic.clone(),
+                resolution: input_resolution.clone(),
+                distortions: [0.0; 4], // Initialize with zero distortion coefficients
+            };
+            let mut cost_model = KannalaBrandtOptimizationCost::new(model, points_3d, points_2d);
             cost_model.linear_estimation()?;
             Box::new(cost_model)
         }
@@ -133,6 +153,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Output Model Type: {}", cli.output_model);
     info!("Input Path: {:?}", cli.input_path);
 
+    // Also print to stdout for debugging
+    println!("Input Model Type: {}", cli.input_model);
+    println!("Output Model Type: {}", cli.output_model);
+    println!("Input Path: {:?}", cli.input_path);
+
     // Convert PathBuf to &str for loading functions
     let n = 500_usize;
     let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
@@ -173,6 +198,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Intrinsics: {:?}", output_model.get_intrinsics());
     info!("Resolution: {:?}", output_model.get_resolution());
     info!("Distortion: {:?}", output_model.get_distortion());
+
+    // Also print to stdout for debugging
+    println!("\n=== CONVERSION RESULTS ===");
+    println!("Input Model ({}): ", input_model_type);
+    println!("  Intrinsics: {:?}", input_model_intrinsics);
+    println!("  Resolution: {:?}", input_model_resolution);
+    println!("  Distortion: {:?}", input_model_distortion);
+    println!("\nOutput Model ({}):", output_model_type);
+    println!("  Intrinsics: {:?}", output_model.get_intrinsics());
+    println!("  Resolution: {:?}", output_model.get_resolution());
+    println!("  Distortion: {:?}", output_model.get_distortion());
+    println!("========================");
 
     Ok(())
 }
