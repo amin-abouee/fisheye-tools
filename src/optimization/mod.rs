@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod debug;
 pub mod double_sphere;
 pub mod eucm;
 pub mod kannala_brandt;
