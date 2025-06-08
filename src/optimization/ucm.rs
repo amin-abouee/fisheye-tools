@@ -191,40 +191,42 @@ impl Residual1 for UcmFactrsResidual {
     ///
     /// A `VectorX<T>` of dimension 2, representing the residual `[ru, rv]`.
     fn residual1<T: Numeric>(&self, cam_params: VectorVar<5, T>) -> VectorX<T> {
-        // Convert camera parameters from generic type T to f64 for UcmModel
-        let fx = cam_params[0].to_subset().unwrap_or(1000.0);
-        let fy = cam_params[1].to_subset().unwrap_or(1000.0);
-        let cx = cam_params[2].to_subset().unwrap_or(320.0);
-        let cy = cam_params[3].to_subset().unwrap_or(240.0);
-        let alpha = cam_params[4].to_subset().unwrap_or(1.0);
+        let fx = cam_params[0];
+        let fy = cam_params[1];
+        let cx = cam_params[2];
+        let cy = cam_params[3];
+        let alpha = cam_params[4];
 
-        // Create a temporary UCM model with current parameters
-        let temp_model = UcmModel {
-            intrinsics: crate::camera::Intrinsics { fx, fy, cx, cy },
-            resolution: crate::camera::Resolution {
-                width: 640,
-                height: 480,
-            }, // Dummy resolution
-            alpha,
-        };
+        // Observed 2D point coordinates
+        let gt_u = T::from(self.point2d.x);
+        let gt_v = T::from(self.point2d.y);
 
-        // Convert 3D point to f64
-        let point3d_f64 = Vector3::new(self.point3d.x, self.point3d.y, self.point3d.z);
-        let point2d_f64 = Vector2::new(self.point2d.x, self.point2d.y);
+        // 3D point coordinates
+        let obs_x = T::from(self.point3d.x);
+        let obs_y = T::from(self.point3d.y);
+        let obs_z = T::from(self.point3d.z);
 
-        // Use the existing UcmModel::project method
-        match temp_model.project(&point3d_f64) {
-            Ok(projected_2d) => {
-                // Compute residuals (projected - observed) and convert back to type T
-                let residual_u = T::from(projected_2d.x - point2d_f64.x);
-                let residual_v = T::from(projected_2d.y - point2d_f64.y);
-                VectorX::from_vec(vec![residual_u, residual_v])
-            }
-            Err(_) => {
-                // Return large residuals for invalid projections
-                VectorX::from_vec(vec![T::from(1e6), T::from(1e6)])
-            }
+        // Compute intermediate values (same as C++ implementation)
+        let u_cx = gt_u - cx;
+        let v_cy = gt_v - cy;
+        let r_squared = obs_x * obs_x + obs_y * obs_y + obs_z * obs_z;
+        let d = r_squared.sqrt();
+        let denom = alpha * d + (T::from(1.0) - alpha) * obs_z;
+
+        // Check for valid projection (same as C++ implementation)
+        let precision = T::from(1e-3);
+        if denom < precision {
+            // Return large residuals for invalid projections
+            return VectorX::from_vec(vec![T::from(1e6), T::from(1e6)]);
         }
+
+        // Compute residuals using C++ formulation:
+        // residuals[0] = fx * obs_x - u_cx * denom
+        // residuals[1] = fy * obs_y - v_cy * denom
+        let residual_u = fx * obs_x - u_cx * denom;
+        let residual_v = fy * obs_y - v_cy * denom;
+
+        VectorX::from_vec(vec![residual_u, residual_v])
     }
 
     /// Computes the analytical Jacobian for the residual function.

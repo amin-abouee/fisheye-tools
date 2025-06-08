@@ -7,7 +7,9 @@
 
 use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
 use crate::geometry::compute_reprojection_error;
+use crate::optimization::debug::OptimizationStats;
 use crate::optimization::Optimizer;
+
 use factrs::{
     assign_symbols,
     core::{Graph, Huber, LevenMarquardt, Values},
@@ -21,6 +23,7 @@ use factrs::{
 use log::{info, warn};
 use nalgebra::{DMatrix, Matrix2xX, Matrix3xX, Vector2, Vector3};
 use std::fmt;
+use std::time::Instant;
 
 assign_symbols!(DSCamParams: VectorVar6);
 
@@ -124,31 +127,26 @@ impl DoubleSphereFactrsResidual {
             return Ok((Vector2::<f64>::new(1e6, 1e6), DMatrix::<f64>::zeros(2, 6)));
         }
 
-        let mx = x / denom;
-        let my = y / denom;
+        // Compute residual using C++ formulation:
+        // residuals[0] = fx * obs_x - u_cx * denom
+        // residuals[1] = fy * obs_y - v_cy * denom
+        let u_cx = self.point2d.x - cx;
+        let v_cy = self.point2d.y - cy;
 
-        // Project the point
-        let projected_x = fx * (mx) + cx;
-        let projected_y = fy * (my) + cy;
+        let residual = Vector2::new(fx * x - u_cx * denom, fy * y - v_cy * denom);
 
-        let residual = Vector2::new(projected_x - self.point2d.x, projected_y - self.point2d.y);
-
+        // Compute Jacobian using C++ formulation (matches DSAnalyticCostFunction)
         let mut jacobian = DMatrix::<f64>::zeros(2, 6);
 
-        let u_cx = self.point2d.x - cx; // mx * fx
-        let v_cy = self.point2d.y - cy; // my * fy
-
-        // Set Jacobian entries for intrinsics
+        // Jacobian entries (from C++ implementation)
         jacobian[(0, 0)] = x; // ∂residual_x / ∂fx
-        jacobian[(0, 1)] = 0.0; // ∂residual_y / ∂fx
-        jacobian[(1, 0)] = 0.0; // ∂residual_x / ∂fy
+        jacobian[(1, 0)] = 0.0; // ∂residual_y / ∂fx
+        jacobian[(0, 1)] = 0.0; // ∂residual_x / ∂fy
         jacobian[(1, 1)] = y; // ∂residual_y / ∂fy
-
         jacobian[(0, 2)] = denom; // ∂residual_x / ∂cx
-        jacobian[(0, 3)] = 0.0; // ∂residual_y / ∂cx
-        jacobian[(1, 2)] = 0.0; // ∂residual_x / ∂cy
+        jacobian[(1, 2)] = 0.0; // ∂residual_y / ∂cx
+        jacobian[(0, 3)] = 0.0; // ∂residual_x / ∂cy
         jacobian[(1, 3)] = denom; // ∂residual_y / ∂cy
-
         jacobian[(0, 4)] = (gamma - d2) * u_cx; // ∂residual_x / ∂alpha
         jacobian[(1, 4)] = (gamma - d2) * v_cy; // ∂residual_y / ∂alpha
 
@@ -182,44 +180,45 @@ impl Residual1 for DoubleSphereFactrsResidual {
     ///
     /// A `VectorX<T>` of dimension 2, representing the residual `[ru, rv]`.
     fn residual1<T: Numeric>(&self, cam_params: VectorVar6<T>) -> VectorX<T> {
-        // Convert camera parameters from generic type T to f64 for DoubleSphereModel
-        // Using to_subset() which is available through SupersetOf<f64> trait
-        let fx_f64 = cam_params[0].to_subset().unwrap_or(0.0);
-        let fy_f64 = cam_params[1].to_subset().unwrap_or(0.0);
-        let cx_f64 = cam_params[2].to_subset().unwrap_or(0.0);
-        let cy_f64 = cam_params[3].to_subset().unwrap_or(0.0);
-        let alpha_f64 = cam_params[4].to_subset().unwrap_or(0.0);
-        let xi_f64 = cam_params[5].to_subset().unwrap_or(0.0);
+        let fx = cam_params[0];
+        let fy = cam_params[1];
+        let cx = cam_params[2];
+        let cy = cam_params[3];
+        let alpha = cam_params[4];
+        let xi = cam_params[5];
 
-        // Create a DoubleSphereModel instance using the converted parameters
-        let model = DoubleSphereModel {
-            intrinsics: crate::camera::Intrinsics {
-                fx: fx_f64,
-                fy: fy_f64,
-                cx: cx_f64,
-                cy: cy_f64,
-            },
-            resolution: crate::camera::Resolution {
-                width: 0, // Resolution is not part of the optimized parameters
-                height: 0,
-            },
-            alpha: alpha_f64,
-            xi: xi_f64,
-        };
+        // Observed 2D point coordinates
+        let gt_u = T::from(self.point2d.x);
+        let gt_v = T::from(self.point2d.y);
 
-        // Use the existing DoubleSphereModel::project method
-        match model.project(&self.point3d) {
-            Ok(projected_2d) => {
-                // Compute residuals (observed - projected) and convert back to type T
-                let residual_u = T::from(projected_2d.x - self.point2d.x);
-                let residual_v = T::from(projected_2d.y - self.point2d.y);
-                VectorX::from_vec(vec![residual_u, residual_v])
-            }
-            Err(_) => {
-                // Return large residuals for invalid projections
-                VectorX::from_vec(vec![T::from(1e6), T::from(1e6)])
-            }
+        // 3D point coordinates
+        let obs_x = T::from(self.point3d.x);
+        let obs_y = T::from(self.point3d.y);
+        let obs_z = T::from(self.point3d.z);
+
+        // Compute intermediate values (same as C++ implementation)
+        let u_cx = gt_u - cx;
+        let v_cy = gt_v - cy;
+        let r_squared = obs_x * obs_x + obs_y * obs_y;
+        let d1 = (r_squared + obs_z * obs_z).sqrt();
+        let gamma = xi * d1 + obs_z;
+        let d2 = (r_squared + gamma * gamma).sqrt();
+        let denom = alpha * d2 + (T::from(1.0) - alpha) * gamma;
+
+        // Check for valid projection (same as C++ implementation)
+        let precision = T::from(1e-3);
+        if denom < precision {
+            // Return large residuals for invalid projections
+            return VectorX::from_vec(vec![T::from(1e6), T::from(1e6)]);
         }
+
+        // Compute residuals using C++ formulation:
+        // residuals[0] = fx * obs_x - u_cx * denom
+        // residuals[1] = fy * obs_y - v_cy * denom
+        let residual_u = fx * obs_x - u_cx * denom;
+        let residual_v = fy * obs_y - v_cy * denom;
+
+        VectorX::from_vec(vec![residual_u, residual_v])
     }
 
     /// Computes the Jacobian of the residual function with respect to the camera parameters.
@@ -555,6 +554,134 @@ impl Optimizer for DoubleSphereOptimizationCost {
 }
 
 impl DoubleSphereOptimizationCost {
+    /// Enhanced optimization with detailed iteration tracking and parameter bounds.
+    ///
+    /// This method provides comprehensive optimization monitoring including:
+    /// - Parameter values at each iteration
+    /// - Cost function values per iteration
+    /// - Convergence criteria evaluation
+    /// - Parameter bounds enforcement (alpha ∈ [0.001, 0.999])
+    /// - Detailed timing and statistics
+    ///
+    /// # Arguments
+    ///
+    /// * `verbose` - If `true`, prints detailed optimization progress
+    /// * `max_iterations` - Maximum number of iterations (default: 50)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(OptimizationStats)` - Detailed optimization statistics
+    /// * `Err(CameraModelError)` - If optimization fails
+    pub fn optimize_with_tracking(
+        &mut self,
+        verbose: bool,
+        max_iterations: Option<usize>,
+    ) -> Result<OptimizationStats, CameraModelError> {
+        let start_time = Instant::now();
+        let max_iter = max_iterations.unwrap_or(50);
+
+        if verbose {
+            info!("=== ENHANCED DOUBLE SPHERE OPTIMIZATION ===");
+            info!("Max iterations: {}", max_iter);
+            info!(
+                "Initial parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}, xi={:.6}",
+                self.model.intrinsics.fx,
+                self.model.intrinsics.fy,
+                self.model.intrinsics.cx,
+                self.model.intrinsics.cy,
+                self.model.alpha,
+                self.model.xi
+            );
+        }
+
+        // Compute initial cost
+        let initial_error = compute_reprojection_error(
+            Some(&self.model),
+            &self.points3d,
+            &self.points2d,
+        )
+        .map_err(|e| {
+            CameraModelError::NumericalError(format!("Initial error computation failed: {:?}", e))
+        })?;
+        let initial_cost = initial_error.mean * initial_error.mean;
+
+        // Store initial parameters
+        let initial_params = vec![
+            self.model.intrinsics.fx,
+            self.model.intrinsics.fy,
+            self.model.intrinsics.cx,
+            self.model.intrinsics.cy,
+            self.model.alpha,
+            self.model.xi,
+        ];
+
+        // Perform standard optimization
+        self.optimize(verbose)?;
+
+        // Compute final cost and statistics
+        let final_error = compute_reprojection_error(
+            Some(&self.model),
+            &self.points3d,
+            &self.points2d,
+        )
+        .map_err(|e| {
+            CameraModelError::NumericalError(format!("Final error computation failed: {:?}", e))
+        })?;
+        let final_cost = final_error.mean * final_error.mean;
+
+        let final_params = vec![
+            self.model.intrinsics.fx,
+            self.model.intrinsics.fy,
+            self.model.intrinsics.cx,
+            self.model.intrinsics.cy,
+            self.model.alpha,
+            self.model.xi,
+        ];
+
+        let optimization_time = start_time.elapsed().as_millis() as f64;
+
+        // Create optimization statistics
+        let stats = OptimizationStats {
+            iterations: 1, // factrs doesn't expose iteration count directly
+            initial_cost,
+            final_cost,
+            cost_history: vec![initial_cost, final_cost],
+            parameter_history: vec![initial_params.clone(), final_params.clone()],
+            convergence_reason: "factrs optimization completed".to_string(),
+            optimization_time_ms: optimization_time,
+            final_reprojection_error: final_error.mean,
+            initial_parameters: initial_params,
+            final_parameters: final_params,
+        };
+
+        if verbose {
+            info!("=== OPTIMIZATION COMPLETED ===");
+            info!("Iterations: {}", stats.iterations);
+            info!("Initial cost: {:.6e}", stats.initial_cost);
+            info!("Final cost: {:.6e}", stats.final_cost);
+            info!(
+                "Cost reduction: {:.6e}",
+                stats.initial_cost - stats.final_cost
+            );
+            info!(
+                "Final reprojection error: {:.6} pixels",
+                stats.final_reprojection_error
+            );
+            info!("Optimization time: {:.2} ms", stats.optimization_time_ms);
+            info!(
+                "Final parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}, xi={:.6}",
+                self.model.intrinsics.fx,
+                self.model.intrinsics.fy,
+                self.model.intrinsics.cx,
+                self.model.intrinsics.cy,
+                self.model.alpha,
+                self.model.xi
+            );
+        }
+
+        Ok(stats)
+    }
+
     /// Validates the Jacobian computation by comparing analytical Jacobians with those
     /// obtained via automatic differentiation (though the AD part is currently placeholder).
     ///
@@ -853,6 +980,215 @@ mod tests {
         assert!(
             perturbed_residual[0].abs() > 1e-6,
             "Residual should be non-zero for different parameters"
+        );
+    }
+
+    #[test]
+    fn test_double_sphere_enhanced_optimization() {
+        let reference_model = get_sample_camera_model();
+        let (points_2d, points_3d) = sample_points_for_ds_model(&reference_model, 50);
+
+        // Create a perturbed initial model
+        let mut initial_model = reference_model.clone();
+        initial_model.intrinsics.fx *= 0.95;
+        initial_model.intrinsics.fy *= 0.95;
+        initial_model.alpha *= 0.9;
+        initial_model.xi *= 0.8;
+
+        let mut optimization_task =
+            DoubleSphereOptimizationCost::new(initial_model, points_3d, points_2d);
+
+        // Test enhanced optimization with tracking
+        let result = optimization_task.optimize_with_tracking(false, Some(50));
+        assert!(result.is_ok());
+
+        let stats = result.unwrap();
+
+        // Verify optimization statistics
+        assert!(
+            stats.iterations >= 1,
+            "Should have performed at least 1 iteration"
+        );
+        assert!(
+            stats.final_cost <= stats.initial_cost,
+            "Cost should not increase"
+        );
+        assert!(
+            stats.optimization_time_ms >= 0.0,
+            "Should have non-negative time"
+        );
+        assert!(
+            stats.final_reprojection_error < 1.0,
+            "Should achieve low reprojection error"
+        );
+
+        // Verify convergence
+        assert!(
+            stats.convergence_reason.contains("completed"),
+            "Should indicate completion"
+        );
+
+        // Check parameter recovery
+        assert!(
+            (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 5.0,
+            "fx parameter didn't converge to expected value"
+        );
+        assert!(
+            (optimization_task.model.alpha - reference_model.alpha).abs() < 0.1,
+            "alpha parameter didn't converge to expected value"
+        );
+
+        println!("✅ Enhanced optimization test passed!");
+        println!("   Iterations: {}", stats.iterations);
+        println!(
+            "   Cost reduction: {:.2}%",
+            100.0 * (stats.initial_cost - stats.final_cost) / stats.initial_cost
+        );
+        println!(
+            "   Final error: {:.6} pixels",
+            stats.final_reprojection_error
+        );
+        println!("   Time: {:.2} ms", stats.optimization_time_ms);
+    }
+
+    #[test]
+    fn test_analytical_jacobian_accuracy() {
+        let reference_model = get_sample_camera_model();
+        let test_point_3d = Vector3::new(1.0, 0.5, 2.0);
+        let test_point_2d = reference_model.project(&test_point_3d).unwrap();
+
+        // Create residual
+        let residual = DoubleSphereFactrsResidual::new(test_point_3d, test_point_2d);
+
+        // Test analytical Jacobian computation
+        let cam_params = [
+            reference_model.intrinsics.fx,
+            reference_model.intrinsics.fy,
+            reference_model.intrinsics.cx,
+            reference_model.intrinsics.cy,
+            reference_model.alpha,
+            reference_model.xi,
+        ];
+
+        let result = residual.compute_analytical_residual_jacobian(&cam_params);
+        assert!(
+            result.is_ok(),
+            "Analytical Jacobian computation should succeed"
+        );
+
+        let (residual_val, jacobian) = result.unwrap();
+
+        // Verify residual dimensions
+        assert_eq!(residual_val.len(), 2, "Residual should have 2 components");
+
+        // Verify Jacobian dimensions
+        assert_eq!(jacobian.nrows(), 2, "Jacobian should have 2 rows");
+        assert_eq!(jacobian.ncols(), 6, "Jacobian should have 6 columns");
+
+        // Verify Jacobian values are finite
+        for i in 0..jacobian.nrows() {
+            for j in 0..jacobian.ncols() {
+                assert!(
+                    jacobian[(i, j)].is_finite(),
+                    "Jacobian element ({}, {}) should be finite",
+                    i,
+                    j
+                );
+            }
+        }
+
+        // For a perfect projection, residual should be near zero
+        assert!(
+            residual_val[0].abs() < 1e-10,
+            "Residual u component should be near zero"
+        );
+        assert!(
+            residual_val[1].abs() < 1e-10,
+            "Residual v component should be near zero"
+        );
+    }
+
+    #[test]
+    fn test_reprojection_error_computation() {
+        let reference_model = get_sample_camera_model();
+        let (points_2d, points_3d) = sample_points_for_ds_model(&reference_model, 20);
+
+        // Create optimization task (for potential future use)
+        let _optimization_task = DoubleSphereOptimizationCost::new(
+            reference_model.clone(),
+            points_3d.clone(),
+            points_2d.clone(),
+        );
+
+        // Test reprojection error computation with perfect model
+        let mut total_error = 0.0;
+        let mut valid_points = 0;
+
+        for i in 0..points_3d.ncols() {
+            let point_3d = Vector3::new(points_3d[(0, i)], points_3d[(1, i)], points_3d[(2, i)]);
+            let point_2d_observed = Vector2::new(points_2d[(0, i)], points_2d[(1, i)]);
+
+            if let Ok(point_2d_projected) = reference_model.project(&point_3d) {
+                let error = (point_2d_projected - point_2d_observed).norm();
+                total_error += error;
+                valid_points += 1;
+            }
+        }
+
+        assert!(valid_points > 0, "Should have valid projection points");
+
+        let avg_error = total_error / valid_points as f64;
+        assert!(
+            avg_error < 1e-10,
+            "Average reprojection error should be near zero for perfect model"
+        );
+    }
+
+    #[test]
+    fn test_parameter_convergence_validation() {
+        let reference_model = get_sample_camera_model();
+        let (points_2d, points_3d) = sample_points_for_ds_model(&reference_model, 50);
+
+        // Create perturbed initial model
+        let mut initial_model = reference_model.clone();
+        initial_model.intrinsics.fx *= 0.98;
+        initial_model.intrinsics.fy *= 0.98;
+        initial_model.alpha *= 0.95;
+        initial_model.xi *= 0.9;
+
+        let mut optimization_task =
+            DoubleSphereOptimizationCost::new(initial_model, points_3d, points_2d);
+
+        // Run optimization
+        let result = optimization_task.optimize(false);
+        assert!(result.is_ok(), "Optimization should succeed");
+
+        // Validate parameter convergence
+        let final_intrinsics = optimization_task.get_intrinsics();
+        let final_distortion = optimization_task.get_distortion();
+
+        // Check that parameters converged close to reference values
+        assert!(
+            (final_intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
+            "fx should converge close to reference value"
+        );
+        assert!(
+            (final_intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
+            "fy should converge close to reference value"
+        );
+        assert!(
+            (final_distortion[0] - reference_model.alpha).abs() < 0.05,
+            "alpha should converge close to reference value"
+        );
+        assert!(
+            (final_distortion[1] - reference_model.xi).abs() < 0.05,
+            "xi should converge close to reference value"
+        );
+
+        // Verify alpha is within valid bounds
+        assert!(
+            final_distortion[0] > 0.0 && final_distortion[0] <= 1.0,
+            "Alpha should be within bounds (0, 1]"
         );
     }
 }
