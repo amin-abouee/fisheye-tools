@@ -735,19 +735,19 @@ mod tests {
         let path = "samples/kannala_brandt.yaml";
         let model = KannalaBrandtModel::load_from_yaml(path).unwrap();
 
-        assert_relative_eq!(model.intrinsics.fx, 461.58688085556616, epsilon = 1e-9);
-        assert_relative_eq!(model.intrinsics.fy, 460.2811732644195, epsilon = 1e-9);
-        assert_relative_eq!(model.intrinsics.cx, 366.28603126815506, epsilon = 1e-9);
-        assert_relative_eq!(model.intrinsics.cy, 249.08026891791644, epsilon = 1e-9);
+        // Values from the actual YAML file: samples/kannala_brandt.yaml
+        assert_relative_eq!(model.intrinsics.fx, 190.97847715128717, epsilon = 1e-9);
+        assert_relative_eq!(model.intrinsics.fy, 190.9733070521226, epsilon = 1e-9);
+        assert_relative_eq!(model.intrinsics.cx, 254.93170605935475, epsilon = 1e-9);
+        assert_relative_eq!(model.intrinsics.cy, 256.8974428996504, epsilon = 1e-9);
 
-        assert_eq!(model.resolution.width, 752);
-        assert_eq!(model.resolution.height, 480);
+        assert_eq!(model.resolution.width, 512);
+        assert_eq!(model.resolution.height, 512);
 
-        assert_relative_eq!(model.distortions[0], -0.012523386218579752, epsilon = 1e-9); // k1
-        assert_relative_eq!(model.distortions[1], 0.057836801948828065, epsilon = 1e-9); // k2
-        assert_relative_eq!(model.distortions[2], -0.08495347810986263, epsilon = 1e-9); // k3
-        assert_relative_eq!(model.distortions[3], 0.04362766880887814, epsilon = 1e-9);
-        // k4
+        assert_relative_eq!(model.distortions[0], 0.0034823894022493434, epsilon = 1e-9); // k1
+        assert_relative_eq!(model.distortions[1], 0.0007150348452162257, epsilon = 1e-9); // k2
+        assert_relative_eq!(model.distortions[2], -0.0020532361418706202, epsilon = 1e-9); // k3
+        assert_relative_eq!(model.distortions[3], 0.00020293673591811182, epsilon = 1e-9); // k4
     }
 
     /// Tests loading from a non-existent YAML file, expecting an I/O error.
