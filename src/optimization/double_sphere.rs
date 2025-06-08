@@ -551,7 +551,6 @@ impl Optimizer for DoubleSphereOptimizationCost {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
