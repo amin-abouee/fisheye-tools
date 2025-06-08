@@ -747,7 +747,8 @@ mod tests {
         assert_relative_eq!(model.distortions[0], 0.0034823894022493434, epsilon = 1e-9); // k1
         assert_relative_eq!(model.distortions[1], 0.0007150348452162257, epsilon = 1e-9); // k2
         assert_relative_eq!(model.distortions[2], -0.0020532361418706202, epsilon = 1e-9); // k3
-        assert_relative_eq!(model.distortions[3], 0.00020293673591811182, epsilon = 1e-9); // k4
+        assert_relative_eq!(model.distortions[3], 0.00020293673591811182, epsilon = 1e-9);
+        // k4
     }
 
     /// Tests loading from a non-existent YAML file, expecting an I/O error.
