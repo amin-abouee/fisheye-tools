@@ -215,7 +215,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
             self.model.intrinsics.fy,
             self.model.intrinsics.cx,
             self.model.intrinsics.cy,
-            self.model.alpha.max(1e-6).min(1.0), // Clamp alpha to valid range
+            self.model.alpha.clamp(1e-6, 1.0), // Clamp alpha to valid range
             self.model.xi,
         ]);
         let mut initial_values = HashMap::new();
@@ -245,7 +245,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
         self.model.intrinsics.fy = optimized_params[1];
         self.model.intrinsics.cx = optimized_params[2];
         self.model.intrinsics.cy = optimized_params[3];
-        self.model.alpha = optimized_params[4].max(1e-6).min(1.0); // Ensure bounds
+        self.model.alpha = optimized_params[4].clamp(1e-6, 1.0); // Ensure bounds
         self.model.xi = optimized_params[5];
 
         // Validate the optimized parameters
