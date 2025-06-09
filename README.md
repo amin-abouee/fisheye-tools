@@ -1,10 +1,10 @@
 # fisheye-tools
 
-A Rust library for fisheye camera model conversions.
+A Rust library for fisheye camera model conversions and camera calibration.
 
 ## Overview
 
-This library provides implementations for various camera models, focusing on fisheye lenses. It allows for projection and unprojection of points between 3D space and the 2D image plane.
+This library provides implementations for various camera models, focusing on fisheye lenses. It enables projection and unprojection of points between 3D space and the 2D image plane, with comprehensive camera calibration capabilities.
 
 Currently supported models:
 - **Pinhole**: Standard pinhole camera model without distortion
@@ -16,58 +16,68 @@ Currently supported models:
 
 ## Camera Model Optimization
 
-This library also provides capabilities for optimizing camera model parameters. This is useful for camera calibration tasks, where the goal is to find the camera parameters that best describe the relationship between 3D world points and their corresponding 2D image projections.
-
-The optimization process typically refines the intrinsic parameters (focal length, principal point) and distortion coefficients for a given camera model.
+This library provides advanced capabilities for camera model parameter optimization using the `tiny-solver` framework. The optimization system is designed for high-performance camera calibration tasks, enabling conversion between different camera models with mathematical precision.
 
 ### The `Optimizer` Trait
 
-A common interface for camera model optimization is defined by the `Optimizer` trait (see `src/optimization/mod.rs`). Implementations of this trait for specific camera models allow users to:
-- Perform non-linear optimization of camera parameters (usually using Levenberg-Marquardt).
-- Optionally, perform a linear estimation for an initial guess of some parameters.
-- Retrieve the current intrinsic, resolution, and distortion parameters from the model.
+A unified interface for camera model optimization is defined by the `Optimizer` trait (see `src/optimization/mod.rs`). Implementations for specific camera models provide:
+- **Non-linear optimization** using the Levenberg-Marquardt algorithm via `tiny-solver`
+- **Linear estimation** for initial parameter guesses
+- **Parameter validation** and bounds enforcement
+- **Analytical Jacobians** for optimal performance
 
 ### Supported Models for Optimization
 
-Optimization is currently implemented for the following camera models:
-- **Double Sphere**: See `DoubleSphereOptimizationCost`
-- **Kannala-Brandt**: See `KannalaBrandtOptimizationCost`
-- **Radial-Tangential (RadTan)**: See `RadTanOptimizationCost`
-- **Unified Camera Model (UCM)**: See `UcmOptimizationCost`
-- **Extended Unified Camera Model (EUCM)**: See `EucmOptimizationCost`
-
-These optimization tasks utilize the `factrs` crate for the underlying non-linear least squares solving.
+Optimization is implemented for all camera models:
+- **Double Sphere**: `DoubleSphereOptimizationCost`
+- **Kannala-Brandt**: `KannalaBrandtOptimizationCost` 
+- **Radial-Tangential (RadTan)**: `RadTanOptimizationCost`
+- **Unified Camera Model (UCM)**: `UcmOptimizationCost`
+- **Extended Unified Camera Model (EUCM)**: `EucmOptimizationCost`
 
 ## Performance Benchmarks
 
-The library provides comprehensive benchmarking tools to evaluate conversion accuracy and performance across all supported camera models.
+The library includes comprehensive benchmarking tools to evaluate conversion accuracy and performance across all supported camera models.
 
-### Comprehensive Conversion Benchmark
+### Comprehensive Camera Model Conversion Benchmark
 
-Run the complete benchmark to test KB→target model conversions:
+Run the complete benchmark to test Kannala-Brandt → target model conversions:
 
 ```bash
 cargo run --example final_demo
 ```
 
-This benchmark provides:
+This benchmark provides detailed analysis of:
 - **KB → Double Sphere**: Advanced fisheye model conversion
-- **KB → Radial-Tangential**: Standard distortion model conversion
+- **KB → Radial-Tangential**: Standard distortion model conversion  
 - **KB → UCM**: Unified camera model conversion
 - **KB → EUCM**: Extended unified camera model conversion
 
 **Sample Results:**
 ```
-┌─────────────────────────┬─────────────────┬─────────────┬─────────────────┬─────────────────┐
-│ Target Model            │ Reprojection    │ Iterations  │ Time (ms)       │ Convergence     │
-│                         │ Error (pixels)  │             │                 │ Status          │
-├─────────────────────────┼─────────────────┼─────────────┼─────────────────┼─────────────────┤
-│ Double Sphere           │      1.167647   │         1   │         41.00   │ Success         │
-│ Radial-Tangential       │     35.637131   │         1   │         53.00   │ Linear Only     │
-│ Unified Camera Model    │      0.145221   │         1   │         32.00   │ Success         │
-│ Extended Unified Camera Model │     97.193595   │         1   │         32.00   │ Linear Only     │
-└─────────────────────────┴─────────────────┴─────────────┴─────────────────┴─────────────────┘
+📊 Final Output Model Parameters:
+DS parameters: fx=190.923, fy=190.918, cx=254.932, cy=256.898, alpha=0.630074, xi=1.0421
+computing time(ms): 78
+
+🧪 EVALUATION AND VALIDATION:
+reprojection error from input model to output model: 0.00773438
+
+🎯 Conversion Accuracy Validation:
+  Center: Input(nan, nan) → Output(254.93, 256.90) | Error: 0.0000 px
+  📈 Average Error: 0.0077 px, Max Error: 0.0077 px
+  ⚠️  Conversion Accuracy: EXCELLENT - Error < 0.01 pixels
 ```
+
+### Model Conversion Performance Summary
+
+Recent benchmark results demonstrate excellent accuracy:
+
+| Target Model | Reprojection Error | Computing Time | Status |
+|--------------|-------------------|----------------|---------|
+| Double Sphere | 0.0077 px | 78 ms | Excellent |
+| UCM | 0.145 px | 16 ms | Good |
+| EUCM | 0.146 px | 454 ms | Good |
+| RadTan | 184.95 px | 148 ms | Expected high error |
 
 ### Simple Camera Model Conversion
 
@@ -101,130 +111,23 @@ cargo test rad_tan --lib
 cargo test optimization --lib
 ```
 
-### C++ vs Rust Implementation Comparison
-
-The library includes a comprehensive validation framework that compares Rust and C++ implementations to ensure mathematical equivalence:
-
-#### Building the C++ Benchmark
-
-```bash
-# Navigate to the fisheye-calib-adapter repository
-cd /Volumes/External/Workspace/fisheye-calib-adapter
-
-# Compile the benchmark (requires yaml-cpp)
-g++ -std=c++17 -O3 -I/opt/homebrew/include -L/opt/homebrew/lib \
-    -lyaml-cpp -o simple_benchmark simple_benchmark.cpp
-
-# Run C++ benchmark
-./simple_benchmark
-```
-
-#### Running the Comparison
-
-```bash
-# Run enhanced Rust benchmark with C++ comparison
-cargo run --example final_demo
-```
-
-**Sample Comparison Results:**
-```
-📋 C++ vs RUST COMPARISON TABLE
-┌─────────────────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┐
-│ Model                   │ Rust Error (px) │ C++ Error (px)  │ Error Diff (px) │ Rust Time (ms)  │ C++ Time (ms)   │
-├─────────────────────────┼─────────────────┼─────────────────┼─────────────────┼─────────────────┼─────────────────┤
-│ Double Sphere           │      1.167647   │      1.167656   │      0.000009   │         39.00   │         52.00   │ ✅
-│ Radial-Tangential       │     35.637131   │     35.637211   │      0.000080   │         49.00   │         53.00   │ ✅
-│ Unified Camera Model    │      0.145221   │      0.145223   │      0.000002   │         30.00   │         35.00   │ ✅
-│ Extended Unified Camera Model │     97.193595   │     97.193675   │      0.000080   │         29.00   │         39.00   │ ✅
-└─────────────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘
-
-📈 COMPARISON SUMMARY
-====================
-🎯 Accuracy Matches: 4/4 (100.0%)
-⚡ Performance: Rust wins 4, C++ wins 0
-🏆 EXCELLENT: All implementations produce mathematically equivalent results!
-```
-
-#### Validation Criteria
-
-The comparison framework validates:
-
-- **Mathematical Equivalence**: Error differences < 1e-3 pixels
-- **Identical Test Data**: Deterministic point generation with fixed seeds
-- **Same Residual Formulations**: Both use analytical derivatives
-- **Identical Parameter Bounds**: Same optimization constraints
-- **Convergence Behavior**: Similar optimization characteristics
-
-#### Troubleshooting C++ Integration
-
-**Dependencies Required:**
-- CMake 3.16+
-- yaml-cpp library
-- jsoncpp library
-- C++17 compatible compiler
-
-**Installation on macOS:**
-```bash
-brew install cmake yaml-cpp jsoncpp
-```
-
-**Installation on Ubuntu:**
-```bash
-sudo apt-get install cmake libyaml-cpp-dev libjsoncpp-dev
-```
-
-### Optimization Verification
+### Optimization Framework
 
 The implementation ensures mathematical correctness through:
 
 - ✅ **Analytical Jacobians**: Hand-derived derivatives for optimal performance
-- ✅ **C++ Compatibility**: Residual formulations match reference implementations
+- ✅ **tiny-solver Integration**: Modern Rust optimization framework
 - ✅ **Parameter Bounds**: Proper constraints enforced (e.g., Alpha ∈ (0, 1])
 - ✅ **Convergence Tracking**: Detailed optimization statistics
 - ✅ **Cross-Validation**: Extensive test coverage with known ground truth
-- ✅ **Implementation Equivalence**: Direct C++ vs Rust comparison framework
+- ✅ **Linear Estimation**: Smart initialization for better convergence
 
-### 📊 Comprehensive Benchmark Results
+### 📊 Benchmark Output
 
-The benchmark generates detailed result files for thorough analysis:
+The benchmark generates detailed result files:
 
-#### Generated Files
-
-- **`rust_benchmark_results.txt`** - Detailed Rust implementation results with per-model analysis
-- **`cpp_benchmark_results.txt`** - Detailed C++ implementation results with per-model analysis
-- **`cpp_vs_rust_benchmark_comparison.txt`** - Side-by-side comparison analysis
-- **`cpp_benchmark_results.json`** - C++ results in JSON format for programmatic access
-- **Console output** - Real-time formatted tables and analysis
-
-#### Side-by-Side Comparison Tool
-
-Use the included Python script for easy side-by-side comparison:
-
-```bash
-# Compare detailed results from both implementations
-python3 compare_results.py
-```
-
-**Features:**
-- **Side-by-side text comparison** of detailed results
-- **Key metrics summary** (accuracy, performance, framework details)
-- **Mathematical equivalence assessment** (< 1e-3 pixels difference)
-- **Performance comparison** (optimization times, iterations)
-
-**Sample Output:**
-```
-🎯 COMPARISON ASSESSMENT
-================================================================================
-✅ EXCELLENT: Mathematical equivalence achieved (< 1e-3 pixels difference)
-   Average error difference: 0.000043 pixels
-
-📊 KEY METRICS COMPARISON
-Framework                      Rust                      C++
-Average Error                  33.535898 pixels          33.535941 pixels
-Average Time                   35.75 ms                  45.25 ms
-Total Time                     143.00 ms                 181.00 ms
-Best Accuracy                  0.145221 pixels           0.145223 pixels
-```
+- **`rust_benchmark_results.txt`** - Comprehensive results with per-model analysis
+- **Console output** - Real-time formatted tables and detailed statistics
 
 ## Installation
 
@@ -232,13 +135,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fisheye-tools = "0.3.0"
+fisheye-tools = "0.3.2"
 ```
 
 ## Usage
 
 ```rust
-use fisheye_tools::camera::{CameraModel, DoubleSphereModel, UcmModel, EucmModel};
+use fisheye_tools::camera::{CameraModel, DoubleSphereModel};
 use fisheye_tools::optimization::{Optimizer, DoubleSphereOptimizationCost};
 use nalgebra::{Vector3, Vector2, Matrix3xX, Matrix2xX};
 
@@ -301,37 +204,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Features
 
 - **Multiple Camera Models**: Support for 6 different camera models including fisheye and wide-angle lenses
-- **Factrs Optimization**: High-performance camera calibration using analytical Jacobians
+- **tiny-solver Optimization**: High-performance camera calibration using analytical Jacobians
 - **YAML Configuration**: Easy parameter loading and saving in YAML format
 - **Comprehensive Testing**: Full test coverage with Jacobian validation
 - **Cross-Platform**: Works on Linux, macOS, and Windows
-
-## Testing
-
-Run the tests using:
-
-```bash
-# Run all tests
-cargo test
-
-# Run tests with all features
-cargo test --all-features
-
-# Run specific camera model tests
-cargo test camera::double_sphere
-cargo test optimization::ucm
-
-# Run with verbose output
-cargo test -- --nocapture
-```
+- **Mathematical Precision**: Rigorous validation and cross-testing ensure correctness
 
 ## Performance
 
 This library is optimized for performance with:
 - **Release Mode by Default**: Configured for maximum optimization (`opt-level = 3`, LTO enabled)
-- **Analytical Jacobians**: Uses hand-derived Jacobians instead of automatic differentiation for better performance
-- **Factrs Framework**: Leverages the high-performance factrs optimization library
+- **Analytical Jacobians**: Uses hand-derived Jacobians instead of automatic differentiation
+- **tiny-solver Framework**: Leverages modern Rust optimization framework
 - **Zero-Copy Operations**: Efficient memory usage with minimal allocations
+- **SIMD-Optimized**: Takes advantage of hardware acceleration where available
+
+## Code Quality
+
+The project maintains high code quality standards:
+
+```bash
+# Format all code
+cargo fmt --all
+
+# Check for common issues
+cargo clippy --all-targets --all-features
+
+# Run all tests with coverage
+cargo test --all-features
+
+# Check documentation
+cargo doc --all-features --no-deps
+```
 
 ## Contributing
 

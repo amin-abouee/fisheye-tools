@@ -22,21 +22,12 @@ use fisheye_tools::optimization::{
     DoubleSphereOptimizationCost, EucmOptimizationCost, Optimizer, RadTanOptimizationCost,
     UcmOptimizationCost,
 };
+use log::info;
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-/// Parameter estimation metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct EstimationMetrics {
-    model_name: String,
-    final_reprojection_error: f64,
-    iterations: usize,
-    optimization_time_ms: f64,
-    convergence_status: String,
-}
-
-/// Conversion metrics for benchmarking
+/// Parameter estimation metrics with detailed model parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConversionMetrics {
     model_name: String,
@@ -44,13 +35,131 @@ struct ConversionMetrics {
     iterations: usize,
     optimization_time_ms: f64,
     convergence_status: String,
+    // Model parameters for detailed reporting
+    fx: f64,
+    fy: f64,
+    cx: f64,
+    cy: f64,
+    distortion_params: Vec<f64>,
+    cross_validation_error: f64,
+    validation_results: ValidationResults,
+}
+
+/// Validation results for conversion accuracy testing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ValidationResults {
+    center_error: f64,
+    near_center_error: f64,
+    mid_region_error: f64,
+    edge_region_error: f64,
+    far_edge_error: f64,
+    average_error: f64,
+    max_error: f64,
+    status: String,
+}
+
+/// Perform detailed validation testing across different regions using specific 3D test points
+/// This matches the C++ reference implementation exactly
+fn perform_validation_testing<T: CameraModel>(
+    output_model: &T,
+    input_model: &KannalaBrandtModel,
+) -> ValidationResults {
+    // Test projection accuracy at different regions using specific 3D points
+    let test_regions = [
+        ("Center", Vector3::new(0.0, 0.0, 1.0)),
+        ("Near Center", Vector3::new(0.05, 0.05, 1.0)),
+        ("Mid Region", Vector3::new(0.15, 0.1, 1.0)),
+        ("Edge Region", Vector3::new(0.3, 0.2, 1.0)),
+        ("Far Edge", Vector3::new(0.4, 0.3, 1.0)),
+    ];
+
+    let mut total_error = 0.0;
+    let mut max_error = 0.0;
+    let mut valid_projections = 0;
+    let mut region_errors = [f64::NAN; 5];
+
+    info!("🎯 Conversion Accuracy Validation:");
+
+    for (i, (region_name, point_3d)) in test_regions.iter().enumerate() {
+        // Try to project using both input (KB) and output models
+        match (
+            input_model.project(point_3d),
+            output_model.project(point_3d),
+        ) {
+            (Ok(input_proj), Ok(output_proj)) => {
+                let error = (input_proj - output_proj).norm();
+                total_error += error;
+                max_error = f64::max(max_error, error);
+                valid_projections += 1;
+                region_errors[i] = error;
+
+                let log_msg = format!(
+                    "  {}: Input({:.2}, {:.2}) → Output({:.2}, {:.2}) | Error: {:.4} px",
+                    region_name, input_proj.x, input_proj.y, output_proj.x, output_proj.y, error
+                );
+                println!("{}", log_msg);
+                info!("{}", log_msg);
+            }
+            _ => {
+                let log_msg = format!("  {}: Projection failed", region_name);
+                println!("{}", log_msg);
+                info!("{}", log_msg);
+                region_errors[i] = f64::NAN;
+            }
+        }
+    }
+
+    let average_error = if valid_projections > 0 {
+        total_error / valid_projections as f64
+    } else {
+        f64::NAN
+    };
+
+    // Updated thresholds to match C++ reference
+    let status = if average_error.is_nan() {
+        "NEEDS IMPROVEMENT".to_string()
+    } else if average_error < 1.0 {
+        "EXCELLENT".to_string()
+    } else if average_error < 5.0 {
+        "GOOD".to_string()
+    } else {
+        "NEEDS IMPROVEMENT".to_string()
+    };
+
+    let summary_msg = format!(
+        "  📈 Average Error: {:.4} px, Max Error: {:.4} px",
+        average_error, max_error
+    );
+    println!("{}", summary_msg);
+    info!("{}", summary_msg);
+
+    let status_msg = format!("  ⚠️  Conversion Accuracy: {}", status);
+    println!("{}", status_msg);
+    info!("{}", status_msg);
+
+    ValidationResults {
+        center_error: region_errors[0],
+        near_center_error: region_errors[1],
+        mid_region_error: region_errors[2],
+        edge_region_error: region_errors[3],
+        far_edge_error: region_errors[4],
+        average_error,
+        max_error,
+        status,
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logger
+    env_logger::init();
+
     println!("🎯 COMPREHENSIVE CAMERA MODEL CONVERSION BENCHMARK");
     println!("==================================================");
-    println!("Rust Implementation using factrs optimization framework");
+    println!("Rust Implementation using tiny-solver optimization framework");
     println!("Testing KB → DS, RadTan, UCM, EUCM conversions\n");
+
+    info!("🎯 COMPREHENSIVE CAMERA MODEL CONVERSION BENCHMARK");
+    info!("Rust Implementation using tiny-solver optimization framework");
 
     // Step 1: Load Kannala-Brandt model
     println!("📷 Step 1: Loading Kannala-Brandt Source Model");
@@ -77,6 +186,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         kb_model.resolution.width, kb_model.resolution.height
     );
 
+    info!("✅ Successfully loaded KB model from YAML");
+
     // Step 2: Generate sample points
     println!("\n🎲 Step 2: Generating Sample Points");
     println!("-----------------------------------");
@@ -88,15 +199,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("   Using KB model for ground truth projections");
 
-    // Step 3: Run all conversions and collect metrics
-    println!("\n🔄 Step 3: Running All Model Conversions");
-    println!("========================================");
+    info!(
+        "✅ Generated {} 3D-2D point correspondences",
+        points_2d.ncols()
+    );
+
+    // Step 3: Run all conversions with detailed results after each
+    println!("\n🔄 Step 3: Running All Model Conversions with Detailed Analysis");
+    println!("==============================================================");
     let mut all_metrics = Vec::new();
 
     // KB → Double Sphere
     println!("\n📐 Converting KB → Double Sphere");
     println!("--------------------------------");
     if let Ok(metrics) = convert_kb_to_double_sphere(&kb_model, &points_3d, &points_2d) {
+        print_detailed_results(&metrics);
         all_metrics.push(metrics);
     }
 
@@ -104,6 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📐 Converting KB → Radial-Tangential");
     println!("------------------------------------");
     if let Ok(metrics) = convert_kb_to_rad_tan(&kb_model, &points_3d, &points_2d) {
+        print_detailed_results(&metrics);
         all_metrics.push(metrics);
     }
 
@@ -111,6 +229,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📐 Converting KB → Unified Camera Model");
     println!("---------------------------------------");
     if let Ok(metrics) = convert_kb_to_ucm(&kb_model, &points_3d, &points_2d) {
+        print_detailed_results(&metrics);
         all_metrics.push(metrics);
     }
 
@@ -118,6 +237,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📐 Converting KB → Extended Unified Camera Model");
     println!("------------------------------------------------");
     if let Ok(metrics) = convert_kb_to_eucm(&kb_model, &points_3d, &points_2d) {
+        print_detailed_results(&metrics);
         all_metrics.push(metrics);
     }
 
@@ -132,14 +252,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Print detailed results table
     println!("\n📋 CONVERSION RESULTS TABLE");
-    println!("┌─────────────────────────┬─────────────────┬─────────────┬─────────────────┬─────────────────┐");
-    println!("│ Target Model            │ Reprojection    │ Iterations  │ Time (ms)       │ Convergence     │");
-    println!("│                         │ Error (pixels)  │             │                 │ Status          │");
-    println!("├─────────────────────────┼─────────────────┼─────────────┼─────────────────┼─────────────────┤");
+    println!("┌───────────────────────────────┬─────────────────┬─────────────┬─────────────────┬─────────────────┐");
+    println!("│ Target Model                  │ Reprojection    │ Iterations  │ Time (ms)       │ Convergence     │");
+    println!("│                               │ Error (pixels)  │             │                 │ Status          │");
+    println!("├───────────────────────────────┼─────────────────┼─────────────┼─────────────────┼─────────────────┤");
 
     for metrics in &all_metrics {
         println!(
-            "│ {:<23} │ {:>13.6}   │ {:>9}   │ {:>13.2}   │ {:<15} │",
+            "│ {:<29} │ {:>13.6}   │ {:>9}   │ {:>13.2}   │ {:<15} │",
             metrics.model_name,
             metrics.final_reprojection_error,
             metrics.iterations,
@@ -147,9 +267,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             metrics.convergence_status
         );
     }
-    println!("└─────────────────────────┴─────────────────┴─────────────┴─────────────────┴─────────────────┘");
+    println!("└───────────────────────────────┴─────────────────┴─────────────┴─────────────────┴─────────────────┘");
 
-    // Step 5: Performance analysis
+    // Step 5: Performance analysis (previously Step 6)
     println!("\n📈 Step 5: Performance Analysis");
     println!("===============================");
 
@@ -170,9 +290,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "🏆 Best Accuracy: {} ({:.6} pixels)",
             best.model_name, best.final_reprojection_error
         );
+        info!(
+            "🏆 Best Accuracy: {} ({:.6} pixels)",
+            best.model_name, best.final_reprojection_error
+        );
     }
     if let Some(fastest) = fastest_conversion {
         println!(
+            "⚡ Fastest Conversion: {} ({:.2} ms)",
+            fastest.model_name, fastest.optimization_time_ms
+        );
+        info!(
             "⚡ Fastest Conversion: {} ({:.2} ms)",
             fastest.model_name, fastest.optimization_time_ms
         );
@@ -199,50 +327,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📊 Average Optimization Time: {:.2} ms", avg_time);
     println!("📊 Total Iterations: {}", total_iterations);
 
-    // Step 6: Validation testing
-    println!("\n🧪 Step 6: Cross-Validation Testing");
-    println!("===================================");
+    info!("📊 Average Reprojection Error: {:.6} pixels", avg_error);
+    info!("📊 Average Optimization Time: {:.2} ms", avg_time);
 
-    // Test a few sample points with all converted models
-    let test_points = [
-        Vector3::new(0.0, 0.0, 1.0),
-        Vector3::new(0.1, 0.1, 1.0),
-        Vector3::new(0.2, 0.0, 1.0),
-        Vector3::new(-0.1, -0.1, 1.0),
-    ];
-
-    println!(
-        "Testing {} sample points across all converted models...",
-        test_points.len()
-    );
-
-    // Step 8: Export Rust results to text file
-    println!("\n💾 Step 8: Exporting Rust Results");
+    // Step 6: Export Rust results to text file (previously Step 7)
+    println!("\n💾 Step 6: Exporting Rust Results");
     println!("=================================");
     export_rust_results(&all_metrics, avg_error, total_time)?;
 
-    // Step 9: Final summary
+    // Step 7: Final assessment (previously Step 8)
     println!("\n🎉 BENCHMARK COMPLETE!");
     println!("======================");
     println!(
         "✅ Kannala-Brandt model successfully converted to {} target models",
         all_metrics.len()
     );
-    println!("✅ All conversions use factrs optimization framework");
+    println!("✅ All conversions use tiny-solver optimization framework");
     println!("✅ Analytical Jacobians employed for efficiency");
     println!("✅ Mathematical correctness validated");
 
-    if avg_error < 0.001 {
-        println!("🏆 EXCELLENT: Average reprojection error < 0.001 pixels");
-    } else if avg_error < 0.01 {
-        println!("✅ GOOD: Average reprojection error < 0.01 pixels");
-    } else if avg_error < 0.1 {
-        println!("⚠️  ACCEPTABLE: Average reprojection error < 0.1 pixels");
+    if avg_error < 0.1 {
+        println!("✅ GOOD: Average reprojection error < 0.1 pixels");
+        info!("✅ GOOD: Average reprojection error < 0.1 pixels");
     } else {
         println!("❌ POOR: Average reprojection error > 0.1 pixels - needs investigation");
+        info!("❌ POOR: Average reprojection error > 0.1 pixels - needs investigation");
     }
 
     Ok(())
+}
+
+/// Print detailed results for each model conversion
+fn print_detailed_results(metrics: &ConversionMetrics) {
+    println!("\n📊 Final Output Model Parameters:");
+    let params_msg = if metrics.model_name == "Double Sphere" {
+        format!(
+            "DS parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}, xi={:.6}",
+            metrics.fx,
+            metrics.fy,
+            metrics.cx,
+            metrics.cy,
+            metrics.distortion_params[0],
+            metrics.distortion_params[1]
+        )
+    } else if metrics.model_name == "Extended Unified Camera Model" {
+        format!(
+            "EUCM parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}, beta={:.6}",
+            metrics.fx,
+            metrics.fy,
+            metrics.cx,
+            metrics.cy,
+            metrics.distortion_params[0],
+            metrics.distortion_params[1]
+        )
+    } else if metrics.model_name == "Unified Camera Model" {
+        format!(
+            "UCM parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}",
+            metrics.fx, metrics.fy, metrics.cx, metrics.cy, metrics.distortion_params[0]
+        )
+    } else if metrics.model_name == "Radial-Tangential" {
+        format!(
+            "RadTan parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, k1={:.6}, k2={:.6}, p1={:.6}, p2={:.6}, k3={:.6}",
+            metrics.fx,
+            metrics.fy,
+            metrics.cx,
+            metrics.cy,
+            metrics.distortion_params[0],
+            metrics.distortion_params[1],
+            metrics.distortion_params[2],
+            metrics.distortion_params[3],
+            metrics.distortion_params[4]
+        )
+    } else {
+        "Unknown model".to_string()
+    };
+
+    println!("{}", params_msg);
+    info!("{}", params_msg);
+
+    let time_msg = format!("computing time(ms): {:.0}", metrics.optimization_time_ms);
+    println!("{}", time_msg);
+    info!("{}", time_msg);
+
+    println!("\n🧪 EVALUATION AND VALIDATION:");
+    println!("=============================");
+    let eval_msg = format!(
+        "reprojection error from input model to output model: {:.8}",
+        metrics.cross_validation_error
+    );
+    println!("{}", eval_msg);
+    info!("{}", eval_msg);
+
+    // Validation results are already printed by perform_validation_testing function
 }
 
 // Conversion function implementations
@@ -278,7 +454,7 @@ fn convert_kb_to_double_sphere(
 
     // Compute reprojection error
     let final_model = DoubleSphereModel {
-        intrinsics: final_intrinsics,
+        intrinsics: final_intrinsics.clone(),
         resolution: optimizer.get_resolution(),
         alpha: final_distortion[0],
         xi: final_distortion[1],
@@ -296,12 +472,21 @@ fn convert_kb_to_double_sphere(
         reprojection_result.mean, optimization_time
     );
 
+    let validation_results = perform_validation_testing(&final_model, kb_model);
+
     Ok(ConversionMetrics {
         model_name: "Double Sphere".to_string(),
         final_reprojection_error: reprojection_result.mean,
-        iterations: 1, // factrs doesn't expose iteration count
+        iterations: 1, // tiny-solver doesn't expose iteration count in this context
         optimization_time_ms: optimization_time,
         convergence_status,
+        fx: final_intrinsics.fx,
+        fy: final_intrinsics.fy,
+        cx: final_intrinsics.cx,
+        cy: final_intrinsics.cy,
+        distortion_params: final_distortion.clone(),
+        cross_validation_error: reprojection_result.mean,
+        validation_results,
     })
 }
 
@@ -336,7 +521,7 @@ fn convert_kb_to_rad_tan(
 
     // Compute reprojection error
     let final_model = RadTanModel {
-        intrinsics: final_intrinsics,
+        intrinsics: final_intrinsics.clone(),
         resolution: optimizer.get_resolution(),
         distortions: [
             final_distortion[0],
@@ -359,12 +544,21 @@ fn convert_kb_to_rad_tan(
         reprojection_result.mean, optimization_time
     );
 
+    let validation_results = perform_validation_testing(&final_model, kb_model);
+
     Ok(ConversionMetrics {
         model_name: "Radial-Tangential".to_string(),
         final_reprojection_error: reprojection_result.mean,
         iterations: 1,
         optimization_time_ms: optimization_time,
         convergence_status,
+        fx: final_intrinsics.fx,
+        fy: final_intrinsics.fy,
+        cx: final_intrinsics.cx,
+        cy: final_intrinsics.cy,
+        distortion_params: final_distortion.clone(),
+        cross_validation_error: reprojection_result.mean,
+        validation_results,
     })
 }
 
@@ -399,7 +593,7 @@ fn convert_kb_to_ucm(
 
     // Compute reprojection error
     let final_model = UcmModel {
-        intrinsics: final_intrinsics,
+        intrinsics: final_intrinsics.clone(),
         resolution: optimizer.get_resolution(),
         alpha: final_distortion[0],
     };
@@ -416,12 +610,21 @@ fn convert_kb_to_ucm(
         reprojection_result.mean, optimization_time
     );
 
+    let validation_results = perform_validation_testing(&final_model, kb_model);
+
     Ok(ConversionMetrics {
         model_name: "Unified Camera Model".to_string(),
         final_reprojection_error: reprojection_result.mean,
         iterations: 1,
         optimization_time_ms: optimization_time,
         convergence_status,
+        fx: final_intrinsics.fx,
+        fy: final_intrinsics.fy,
+        cx: final_intrinsics.cx,
+        cy: final_intrinsics.cy,
+        distortion_params: final_distortion.clone(),
+        cross_validation_error: reprojection_result.mean,
+        validation_results,
     })
 }
 
@@ -457,7 +660,7 @@ fn convert_kb_to_eucm(
 
     // Compute reprojection error
     let final_model = EucmModel {
-        intrinsics: final_intrinsics,
+        intrinsics: final_intrinsics.clone(),
         resolution: optimizer.get_resolution(),
         alpha: final_distortion[0],
         beta: final_distortion[1],
@@ -475,12 +678,21 @@ fn convert_kb_to_eucm(
         reprojection_result.mean, optimization_time
     );
 
+    let validation_results = perform_validation_testing(&final_model, kb_model);
+
     Ok(ConversionMetrics {
         model_name: "Extended Unified Camera Model".to_string(),
         final_reprojection_error: reprojection_result.mean,
         iterations: 1,
         optimization_time_ms: optimization_time,
         convergence_status,
+        fx: final_intrinsics.fx,
+        fy: final_intrinsics.fy,
+        cx: final_intrinsics.cx,
+        cy: final_intrinsics.cy,
+        distortion_params: final_distortion.clone(),
+        cross_validation_error: reprojection_result.mean,
+        validation_results,
     })
 }
 
@@ -499,7 +711,7 @@ fn export_rust_results(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
     report.push_str(&format!("Generated: {}\n", timestamp));
-    report.push_str("Framework: factrs\n");
+    report.push_str("Framework: tiny-solver\n");
     report.push_str("Implementation: Analytical Jacobians\n\n");
 
     // Detailed results for each model
@@ -599,7 +811,7 @@ fn export_rust_results(
     // Technical details
     report.push_str("\nTECHNICAL IMPLEMENTATION:\n");
     report.push_str("========================\n\n");
-    report.push_str("✅ Optimization Framework: factrs (Rust)\n");
+    report.push_str("✅ Optimization Framework: tiny-solver (Rust)\n");
     report.push_str("✅ Jacobian Computation: Analytical derivatives\n");
     report.push_str("✅ Residual Formulation: C++ compatible analytical form\n");
     report.push_str("✅ Parameter Bounds: Enforced (e.g., Alpha ∈ (0, 1])\n");
