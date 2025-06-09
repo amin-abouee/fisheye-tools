@@ -18,10 +18,11 @@ This library provides robust implementations for various camera models, speciali
 ## Features
 
 ### 🎯 **High-Performance Model Conversions**
+- **Any Model → Kannala-Brandt**: Excellent accuracy (sub-millipixel errors) in 4-16ms
 - **KB → Double Sphere**: Sub-millipixel accuracy (0.008px error) in 62ms
 - **KB → UCM**: Excellent accuracy (0.145px error) in 1ms  
 - **KB → EUCM**: Good accuracy (0.314px error) in 11ms
-- **KB → RadTan**: Expected high error for this conversion type
+- **Any Model → RadTan**: Expected high error for fisheye-to-rectilinear conversions
 
 ### 🔬 **Advanced Optimization Framework**
 - **tiny-solver integration**: Pure Rust Levenberg-Marquardt optimization
@@ -43,14 +44,25 @@ This library provides robust implementations for various camera models, speciali
 
 ## Quick Start
 
-### Basic Model Conversion
+### Command-Line Converter (Recommended)
+
+The easiest way to convert between camera models:
+
+```bash
+# Convert any supported model to all other target models
+cargo run --example camera_model_converter -- \
+  --input-model kb \
+  --input-path samples/kannala_brandt.yaml
+```
+
+### Programmatic API
 
 ```rust
 use fisheye_tools::camera::*;
 use fisheye_tools::optimization::*;
 
-// Load a Kannala-Brandt model
-let kb_model = KannalaBrandtModel::from_yaml("camera.yaml")?;
+// Load any supported camera model
+let kb_model = KannalaBrandtModel::load_from_yaml("camera.yaml")?;
 
 // Generate or load 3D-2D point correspondences
 let (points_3d, points_2d) = geometry::sample_points(Some(&kb_model), 450)?;
@@ -64,28 +76,38 @@ let mut ds_optimizer = DoubleSphereOptimizationCost::new(
 ds_optimizer.linear_estimation()?;
 ds_optimizer.optimize(true)?; // verbose=true for detailed output
 
-// Get optimized model
-let final_model = ds_optimizer.get_model();
+// Get optimized parameters
+let final_intrinsics = ds_optimizer.get_intrinsics();
+let final_distortion = ds_optimizer.get_distortion();
 ```
 
-### Running the Comprehensive Demo
+### Running the Comprehensive Camera Model Converter
 
-The `final_demo` example showcases all supported conversions with detailed analysis:
+The `camera_model_converter` example provides flexible conversion from any supported input model to all other target models:
 
 ```bash
-# Run with detailed logging
-RUST_LOG=info cargo run --example final_demo
+# Convert from Kannala-Brandt model
+cargo run --example camera_model_converter -- \
+  --input-model kb \
+  --input-path samples/kannala_brandt.yaml
 
+# Convert from Double Sphere model  
+cargo run --example camera_model_converter -- \
+  --input-model ds \
+  --input-path samples/double_sphere.yaml \
+  --num-points 500
+
+# Supported input models: kb, ds, radtan, ucm, eucm, pinhole
 # Output includes:
 # 1. Source model loading and validation
-# 2. Point generation (450 3D-2D correspondences)
-# 3. Individual model conversions with:
-#    - Conversion accuracy validation
-#    - Final model parameters
-#    - Optimization improvement metrics
+# 2. Point generation (configurable count)
+# 3. Conversions to all compatible target models with:
+#    - Conversion accuracy validation across 5 image regions
+#    - Final model parameters for each target
+#    - Optimization improvement metrics  
 #    - Parameter change tracking
-# 4. Comprehensive results table
-# 5. Performance analysis and export
+# 4. Comprehensive results table and performance analysis
+# 5. Automated results export to file
 ```
 
 ### Camera Model Usage
@@ -109,26 +131,28 @@ model.validate_params()?;
 
 ## Examples
 
-### Model Conversion Demo
-Demonstrates conversion from Kannala-Brandt to all other models:
+### Comprehensive Model Converter
+Flexible conversion from any input model to all target models:
 ```bash
-cargo run --example final_demo
+cargo run --example camera_model_converter -- \
+    --input-model kb \
+    --input-path samples/kannala_brandt.yaml
 ```
 
-### Individual Model Usage
+### Individual Model Conversion
+For one-to-one model conversion:
 ```bash
 cargo run --example camera_model_conversion -- \
     --input-model kb \
     --output-model ds \
-    --input-path samples/kb_camera.yaml \
-    --num-points 100
+    --input-path samples/kannala_brandt.yaml
 ```
 
 ## Sample Data
 
 The `samples/` directory contains:
-- `kb_camera.yaml`: Sample Kannala-Brandt camera parameters
-- Reference camera configurations for testing
+- `kannala_brandt.yaml`: Sample Kannala-Brandt camera parameters
+- Reference camera configurations for testing and validation
 
 ## Performance Benchmarks
 
