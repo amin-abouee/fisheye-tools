@@ -1,0 +1,66 @@
+=== RUST IMPLEMENTATION BENCHMARK RESULTS ===
+
+Generated: 1749483559
+Framework: factrs
+Implementation: Analytical Jacobians
+
+DETAILED CONVERSION RESULTS:
+===========================
+
+1. Double Sphere
+   Reprojection Error: 0.007732 pixels
+   Optimization Time: 62.00 ms
+   Iterations: 1
+   Convergence Status: Success
+   Assessment: ✅ GOOD accuracy
+
+2. Radial-Tangential
+   Reprojection Error: 35.637131 pixels
+   Optimization Time: 48.00 ms
+   Iterations: 1
+   Convergence Status: Linear Only
+   Assessment: ❌ POOR accuracy - needs investigation
+
+3. Unified Camera Model
+   Reprojection Error: 0.145221 pixels
+   Optimization Time: 29.00 ms
+   Iterations: 1
+   Convergence Status: Success
+   Assessment: ❌ POOR accuracy - needs investigation
+
+4. Extended Unified Camera Model
+   Reprojection Error: 97.193595 pixels
+   Optimization Time: 28.00 ms
+   Iterations: 1
+   Convergence Status: Linear Only
+   Assessment: ❌ POOR accuracy - needs investigation
+
+SUMMARY STATISTICS:
+==================
+
+Total Conversions: 4
+Average Reprojection Error: 33.245920 pixels
+Best Accuracy: 0.007732 pixels
+Worst Accuracy: 97.193595 pixels
+Average Optimization Time: 41.75 ms
+Total Optimization Time: 167.00 ms
+Fastest Conversion: 28.00 ms
+Slowest Conversion: 62.00 ms
+Best Accuracy Model: Double Sphere (0.007732 pixels)
+Fastest Model: Extended Unified Camera Model (28.00 ms)
+
+TECHNICAL IMPLEMENTATION:
+========================
+
+✅ Optimization Framework: factrs (Rust)
+✅ Jacobian Computation: Analytical derivatives
+✅ Residual Formulation: C++ compatible analytical form
+✅ Parameter Bounds: Enforced (e.g., Alpha ∈ (0, 1])
+✅ Convergence Criteria: Automatic termination
+✅ Test Data: Deterministic generation (fixed seed)
+
+OVERALL ASSESSMENT:
+==================
+
+❌ POOR: Average reprojection error > 0.1 pixels
+   Significant accuracy issues detected - requires investigation.
