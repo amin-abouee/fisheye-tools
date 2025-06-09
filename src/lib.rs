@@ -10,7 +10,7 @@
 //! - Kannala-Brandt camera model
 //!
 //! The library also includes optimization routines for camera calibration using
-//! the factrs optimization framework.
+//! the tiny-solver optimization framework.
 
 pub mod camera;
 pub mod geometry;
