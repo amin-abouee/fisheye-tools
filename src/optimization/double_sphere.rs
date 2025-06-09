@@ -193,21 +193,21 @@ impl Optimizer for DoubleSphereOptimizationCost {
         problem.add_residual_block(num_residuals, &["params"], Box::new(cost_function), None);
 
         // Set parameter bounds
-        // fx, fy bounds (reasonable range for focal lengths)
-        problem.set_variable_bounds("params", 0, 1.0, 10000.0); // fx
-        problem.set_variable_bounds("params", 1, 1.0, 10000.0); // fy
+        // fx, fy bounds (reasonable range for focal lengths) - relaxed bounds
+        // problem.set_variable_bounds("params", 0, 1.0, 5000.0);  // fx
+        // problem.set_variable_bounds("params", 1, 1.0, 5000.0);  // fy
 
-        // cx, cy bounds (should be within image dimensions)
-        let img_width = self.model.resolution.width as f64;
-        let img_height = self.model.resolution.height as f64;
-        problem.set_variable_bounds("params", 2, -img_width, 2.0 * img_width); // cx
-        problem.set_variable_bounds("params", 3, -img_height, 2.0 * img_height); // cy
+        // cx, cy bounds (should be within reasonable range of image center)
+        // let img_width = self.model.resolution.width as f64;
+        // let img_height = self.model.resolution.height as f64;
+        // problem.set_variable_bounds("params", 2, -img_width, 2.0 * img_width);   // cx
+        // problem.set_variable_bounds("params", 3, -img_height, 2.0 * img_height); // cy
 
         // Alpha bounds (critical constraint: 0 < alpha <= 1)
         problem.set_variable_bounds("params", 4, 1e-6, 1.0); // alpha
 
-        // Xi bounds (typically reasonable range for Double Sphere)
-        problem.set_variable_bounds("params", 5, -2.0, 2.0); // xi
+        // Xi bounds (reasonable range for Double Sphere)
+        // problem.set_variable_bounds("params", 5, -1.0, 1.0);  // xi
 
         // Initial parameters
         let initial_params = DVector::from_vec(vec![
@@ -458,29 +458,68 @@ mod tests {
 
         info!("Optimized model with tiny_solver: {:?}", optimization_task);
 
+        let fx_diff = (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs();
+        let fy_diff = (optimization_task.model.intrinsics.fy - reference_model.intrinsics.fy).abs();
+        let cx_diff = (optimization_task.model.intrinsics.cx - reference_model.intrinsics.cx).abs();
+        let cy_diff = (optimization_task.model.intrinsics.cy - reference_model.intrinsics.cy).abs();
+        let alpha_diff = (optimization_task.model.alpha - reference_model.alpha).abs();
+        let xi_diff = (optimization_task.model.xi - reference_model.xi).abs();
+
+        info!("Parameter differences:");
+        info!(
+            "fx: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.fx, reference_model.intrinsics.fx, fx_diff
+        );
+        info!(
+            "fy: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.fy, reference_model.intrinsics.fy, fy_diff
+        );
+        info!(
+            "cx: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.cx, reference_model.intrinsics.cx, cx_diff
+        );
+        info!(
+            "cy: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.cy, reference_model.intrinsics.cy, cy_diff
+        );
+        info!(
+            "alpha: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.alpha, reference_model.alpha, alpha_diff
+        );
+        info!(
+            "xi: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.xi, reference_model.xi, xi_diff
+        );
+
         assert!(
-            (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
-            "fx parameter didn't converge to expected value"
+            fx_diff < 1.0,
+            "fx parameter didn't converge to expected value. Diff: {:.6}",
+            fx_diff
         );
         assert!(
-            (optimization_task.model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
-            "fy parameter didn't converge to expected value"
+            fy_diff < 1.0,
+            "fy parameter didn't converge to expected value. Diff: {:.6}",
+            fy_diff
         );
         assert!(
-            (optimization_task.model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 1.0,
-            "cx parameter didn't converge to expected value"
+            cx_diff < 1.0,
+            "cx parameter didn't converge to expected value. Diff: {:.6}",
+            cx_diff
         );
         assert!(
-            (optimization_task.model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 1.0,
-            "cy parameter didn't converge to expected value"
+            cy_diff < 1.0,
+            "cy parameter didn't converge to expected value. Diff: {:.6}",
+            cy_diff
         );
         assert!(
-            (optimization_task.model.alpha - reference_model.alpha).abs() < 0.05,
-            "alpha parameter didn't converge to expected value"
+            alpha_diff < 0.05,
+            "alpha parameter didn't converge to expected value. Diff: {:.6}",
+            alpha_diff
         );
         assert!(
-            (optimization_task.model.xi - reference_model.xi).abs() < 0.05,
-            "xi parameter didn't converge to expected value"
+            xi_diff < 0.05,
+            "xi parameter didn't converge to expected value. Diff: {:.6}",
+            xi_diff
         );
         assert!(
             optimization_task.model.alpha > 0.0 && optimization_task.model.alpha <= 1.0,
