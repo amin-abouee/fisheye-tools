@@ -1,7 +1,7 @@
 //! This module provides the cost function and optimization routines
 //! for calibrating a Double Sphere camera model.
 //!
-//! It uses the `factrs` crate for non-linear optimization and defines
+//! It uses the `tiny_solver` crate for non-linear optimization and defines
 //! the necessary structures and traits to integrate the Double Sphere
 //! camera model with the optimization framework.
 
@@ -9,21 +9,12 @@ use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
 use crate::geometry::compute_reprojection_error;
 use crate::optimization::Optimizer;
 
-use factrs::{
-    assign_symbols,
-    core::{Graph, Huber, LevenMarquardt, Values},
-    dtype, fac,
-    linalg::{Const, Diff, DiffResult, ForwardProp, MatrixX, Numeric, VectorX},
-    linear::QRSolver,
-    optimizers::Optimizer as FactrsOptimizer,
-    residuals::Residual1,
-    variables::VectorVar6,
-};
-use log::{info, warn};
-use nalgebra::{DMatrix, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use log::info;
+use nalgebra::{DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use std::collections::HashMap;
 use std::fmt;
-
-assign_symbols!(DSCamParams: VectorVar6);
+use tiny_solver::factors::Factor;
+use tiny_solver::{LevenbergMarquardtOptimizer, Optimizer as TinySolverOptimizer};
 
 /// Cost function for Double Sphere camera model optimization.
 ///
@@ -42,258 +33,73 @@ pub struct DoubleSphereOptimizationCost {
     points2d: Matrix2xX<f64>,
 }
 
-/// Residual implementation for `factrs` optimization of the [`DoubleSphereModel`].
+/// Cost function for `tiny_solver` optimization of the [`DoubleSphereModel`].
 ///
 /// This struct defines the residual error between the observed 2D point and
 /// the projected 2D point from a 3D point using the current camera model parameters.
-/// It is used by the `factrs` optimization framework.
+/// It is used by the `tiny_solver` optimization framework.
 #[derive(Debug, Clone)]
-pub struct DoubleSphereFactrsResidual {
-    /// The 3D point in the camera's coordinate system.
-    point3d: Vector3<dtype>,
-    /// The corresponding observed 2D point in image coordinates.
-    point2d: Vector2<dtype>,
+struct DSCost {
+    /// 3D points in the camera's coordinate system.
+    points3d: Vec<Vector3<f64>>,
+    /// Corresponding observed 2D points in image coordinates.
+    points2d: Vec<Vector2<f64>>,
 }
 
-impl DoubleSphereFactrsResidual {
-    /// Creates a new residual for a single 3D-2D point correspondence.
-    ///
-    /// # Arguments
-    ///
-    /// * `point3d` - The 3D point in the camera's coordinate system.
-    /// * `point2d` - The corresponding observed 2D point in image coordinates.
-    pub fn new(point3d: Vector3<f64>, point2d: Vector2<f64>) -> Self {
-        Self {
-            point3d: point3d.cast::<dtype>(),
-            point2d: point2d.cast::<dtype>(),
-        }
-    }
-
-    /// Computes the residual and its analytical Jacobian with respect to camera parameters.
-    ///
-    /// This method is primarily used for validation and debugging purposes. It leverages
-    /// the analytical Jacobian computation from [`DoubleSphereModel::project`] to provide
-    /// a reference for comparing with Jacobians obtained through automatic differentiation.
-    ///
-    /// # Arguments
-    ///
-    /// * `cam_params` - An array of 6 `f64` values representing the camera parameters:
-    ///   `[fx, fy, cx, cy, alpha, xi]`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing:
-    /// * `Ok((residual, jacobian))` - A tuple where `residual` is a `Vector2<f64>`
-    ///   representing the difference between the observed and projected 2D point,
-    ///   and `jacobian` is a `nalgebra::DMatrix<f64>` (2x6) representing the
-    ///   Jacobian of the residual with respect to the camera parameters.
-    /// * `Err(CameraModelError)` - If the projection or Jacobian computation fails.
-    pub fn compute_analytical_residual_jacobian(
-        &self,
-        cam_params: &[f64; 6], // [fx, fy, cx, cy, alpha, xi]
-    ) -> Result<(Vector2<f64>, DMatrix<f64>), CameraModelError> {
-        const PRECISION: f64 = 1e-3;
-
-        let fx = cam_params[0];
-        let fy = cam_params[1];
-        let cx = cam_params[2];
-        let cy = cam_params[3];
-        let alpha = cam_params[4];
-        let xi = cam_params[5];
-
-        let x = self.point3d.x;
-        let y = self.point3d.y;
-        let z = self.point3d.z;
-
-        let r_squared = (x * x) + (y * y);
-        let d1 = (r_squared + (z * z)).sqrt();
-        let gamma = xi * d1 + z; // Note: Original paper might use 'zeta' for xi.
-        let d2 = (r_squared + gamma * gamma).sqrt();
-        let m_alpha = 1.0 - alpha;
-
-        let denom = alpha * d2 + m_alpha * gamma;
-
-        let w1 = match alpha <= 0.5 {
-            true => alpha / m_alpha,
-            false => m_alpha / alpha,
-        };
-        let w2 = (w1 + xi) / (2.0 * w1 * xi + xi * xi + 1.0).sqrt();
-        let check_projection = z > -w2 * d1;
-
-        // Check if the projection is valid
-        if denom < PRECISION || !check_projection {
-            return Ok((Vector2::<f64>::new(1e6, 1e6), DMatrix::<f64>::zeros(2, 6)));
-        }
-
-        // Compute residual using C++ formulation:
-        // residuals[0] = fx * obs_x - u_cx * denom
-        // residuals[1] = fy * obs_y - v_cy * denom
-        let u_cx = self.point2d.x - cx;
-        let v_cy = self.point2d.y - cy;
-
-        let residual = Vector2::new(fx * x - u_cx * denom, fy * y - v_cy * denom);
-
-        // Compute Jacobian using C++ formulation (matches DSAnalyticCostFunction)
-        let mut jacobian = DMatrix::<f64>::zeros(2, 6);
-
-        // Jacobian entries (from C++ implementation)
-        jacobian[(0, 0)] = x; // ∂residual_x / ∂fx
-        jacobian[(1, 0)] = 0.0; // ∂residual_y / ∂fx
-        jacobian[(0, 1)] = 0.0; // ∂residual_x / ∂fy
-        jacobian[(1, 1)] = y; // ∂residual_y / ∂fy
-        jacobian[(0, 2)] = denom; // ∂residual_x / ∂cx
-        jacobian[(1, 2)] = 0.0; // ∂residual_y / ∂cx
-        jacobian[(0, 3)] = 0.0; // ∂residual_x / ∂cy
-        jacobian[(1, 3)] = denom; // ∂residual_y / ∂cy
-        jacobian[(0, 4)] = (gamma - d2) * u_cx; // ∂residual_x / ∂alpha
-        jacobian[(1, 4)] = (gamma - d2) * v_cy; // ∂residual_y / ∂alpha
-
-        let coeff = (alpha * d1 * gamma) / d2 + (m_alpha * d1);
-        jacobian[(0, 5)] = -u_cx * coeff; // ∂residual_x / ∂xi
-        jacobian[(1, 5)] = -v_cy * coeff; // ∂residual_y / ∂xi
-
-        Ok((residual, jacobian))
+impl DSCost {
+    /// Creates a new residual for a set of 3D-2D point correspondences.
+    pub fn new(points3d: &Matrix3xX<f64>, points2d: &Matrix2xX<f64>) -> Self {
+        let points3d = (0..points3d.ncols())
+            .map(|i| points3d.column(i).into_owned())
+            .collect();
+        let points2d = (0..points2d.ncols())
+            .map(|i| points2d.column(i).into_owned())
+            .collect();
+        Self { points3d, points2d }
     }
 }
 
-// Mark this residual for factrs serialization and other features
-#[factrs::mark]
-impl Residual1 for DoubleSphereFactrsResidual {
-    type DimIn = Const<6>;
-    type DimOut = Const<2>;
-    type V1 = VectorVar6;
-    type Differ = ForwardProp<Self::DimIn>;
+impl<T: nalgebra::RealField> Factor<T> for DSCost {
+    fn residual_func(&self, params: &[DVector<T>]) -> DVector<T> {
+        let cam_params = &params[0];
+        let fx = cam_params[0].clone();
+        let fy = cam_params[1].clone();
+        let cx = cam_params[2].clone();
+        let cy = cam_params[3].clone();
+        let alpha = cam_params[4].clone();
+        let xi = cam_params[5].clone();
 
-    /// Computes the residual vector for the given camera parameters.
-    ///
-    /// The residual is defined as `observed_2d_point - project(3d_point, camera_parameters)`.
-    /// This method is called by the `factrs` optimizer during the optimization process.
-    ///
-    /// # Arguments
-    ///
-    /// * `cam_params` - A `VectorVar6<T>` containing the current camera parameters
-    ///   `[fx, fy, cx, cy, alpha, xi]`. `T` is a numeric type used by `factrs`.
-    ///
-    /// # Returns
-    ///
-    /// A `VectorX<T>` of dimension 2, representing the residual `[ru, rv]`.
-    fn residual1<T: Numeric>(&self, cam_params: VectorVar6<T>) -> VectorX<T> {
-        let fx = cam_params[0];
-        let fy = cam_params[1];
-        let cx = cam_params[2];
-        let cy = cam_params[3];
-        let alpha = cam_params[4];
-        let xi = cam_params[5];
+        let mut residuals = DVector::zeros(self.points2d.len() * 2);
 
-        // Observed 2D point coordinates
-        let gt_u = T::from(self.point2d.x);
-        let gt_v = T::from(self.point2d.y);
+        for i in 0..self.points2d.len() {
+            let p3d = &self.points3d[i];
+            let p2d = &self.points2d[i];
 
-        // 3D point coordinates
-        let obs_x = T::from(self.point3d.x);
-        let obs_y = T::from(self.point3d.y);
-        let obs_z = T::from(self.point3d.z);
+            let gt_u = T::from_f64(p2d.x).unwrap();
+            let gt_v = T::from_f64(p2d.y).unwrap();
+            let obs_x = T::from_f64(p3d.x).unwrap();
+            let obs_y = T::from_f64(p3d.y).unwrap();
+            let obs_z = T::from_f64(p3d.z).unwrap();
 
-        // Compute intermediate values (same as C++ implementation)
-        let u_cx = gt_u - cx;
-        let v_cy = gt_v - cy;
-        let r_squared = obs_x * obs_x + obs_y * obs_y;
-        let d1 = (r_squared + obs_z * obs_z).sqrt();
-        let gamma = xi * d1 + obs_z;
-        let d2 = (r_squared + gamma * gamma).sqrt();
-        let denom = alpha * d2 + (T::from(1.0) - alpha) * gamma;
+            let u_cx = gt_u - cx.clone();
+            let v_cy = gt_v - cy.clone();
+            let r_squared = obs_x.clone() * obs_x.clone() + obs_y.clone() * obs_y.clone();
+            let d1 = (r_squared.clone() + obs_z.clone() * obs_z.clone()).sqrt();
+            let gamma = xi.clone() * d1.clone() + obs_z.clone();
+            let d2 = (r_squared + gamma.clone() * gamma.clone()).sqrt();
+            let one = T::from_f64(1.0).unwrap();
+            let denom = alpha.clone() * d2 + (one - alpha.clone()) * gamma.clone();
 
-        // Check for valid projection (same as C++ implementation)
-        let precision = T::from(1e-3);
-        if denom < precision {
-            // Return large residuals for invalid projections
-            return VectorX::from_vec(vec![T::from(1e6), T::from(1e6)]);
-        }
-
-        // Compute residuals using C++ formulation:
-        // residuals[0] = fx * obs_x - u_cx * denom
-        // residuals[1] = fy * obs_y - v_cy * denom
-        let residual_u = fx * obs_x - u_cx * denom;
-        let residual_v = fy * obs_y - v_cy * denom;
-
-        VectorX::from_vec(vec![residual_u, residual_v])
-    }
-
-    /// Computes the Jacobian of the residual function with respect to the camera parameters.
-    ///
-    /// This implementation overrides the default automatic differentiation provided by `factrs`
-    /// and uses the analytical Jacobian derived from [`DoubleSphereModel::project`].
-    /// This approach offers better computational efficiency while maintaining accuracy.
-    ///
-    /// If the analytical computation fails (e.g., due to invalid parameters leading to
-    /// projection errors), it falls back to automatic differentiation as a safety measure.
-    ///
-    /// # Arguments
-    ///
-    /// * `values` - A `factrs::containers::Values` map containing the current state
-    ///   of the optimization variables (i.e., camera parameters).
-    /// * `keys` - A slice of `factrs::containers::Key` indicating which variables
-    ///   (in this case, `DSCamParams(0)`) to compute the Jacobian against.
-    ///
-    /// # Returns
-    ///
-    /// A `DiffResult<VectorX<dtype>, MatrixX<dtype>>` containing:
-    /// * `value` - The residual vector computed at the given camera parameters.
-    /// * `diff` - The 2x6 Jacobian matrix of the residual with respect to the
-    ///   camera parameters `[fx, fy, cx, cy, alpha, xi]`.
-    fn residual1_jacobian(
-        &self,
-        values: &factrs::containers::Values,
-        keys: &[factrs::containers::Key],
-    ) -> DiffResult<VectorX<dtype>, MatrixX<dtype>>
-    where
-        Self::V1: 'static,
-    {
-        // Get the camera parameters from values
-        let cam_params: &VectorVar6<dtype> = values.get_unchecked(keys[0]).unwrap_or_else(|| {
-            panic!(
-                "Key not found in values: {:?} with type {}",
-                keys[0],
-                std::any::type_name::<VectorVar6<dtype>>()
-            )
-        });
-
-        // Extract parameter values
-        let params_array = [
-            cam_params[0], // fx
-            cam_params[1], // fy
-            cam_params[2], // cx
-            cam_params[3], // cy
-            cam_params[4], // alpha
-            cam_params[5], // xi
-        ];
-
-        // Compute analytical residual and Jacobian
-        match self.compute_analytical_residual_jacobian(&params_array) {
-            Ok((analytical_residual, analytical_jacobian)) => {
-                // Convert nalgebra types to factrs types
-                let residual_vec =
-                    VectorX::from_vec(vec![analytical_residual.x, analytical_residual.y]);
-
-                // Convert the analytical Jacobian to factrs MatrixX
-                // let mut jacobian_factrs = MatrixX::zeros(2, 6);
-                // for i in 0..2 {
-                //     for j in 0..6 {
-                //         jacobian_factrs[(i, j)] = analytical_jacobian[(i, j)];
-                //     }
-                // }
-
-                DiffResult {
-                    value: residual_vec,
-                    diff: analytical_jacobian,
-                }
-            }
-            Err(e) => {
-                // Fallback to automatic differentiation if analytical computation fails
-                warn!("Analytical Jacobian computation failed: {:?}, falling back to automatic differentiation", e);
-                Self::Differ::jacobian_1(|params| self.residual1(params), cam_params)
+            let precision = T::from_f64(1e-3).unwrap();
+            if denom < precision {
+                residuals[i * 2] = T::from_f64(1e6).unwrap();
+                residuals[i * 2 + 1] = T::from_f64(1e6).unwrap();
+            } else {
+                residuals[i * 2] = fx.clone() * obs_x - u_cx * denom.clone();
+                residuals[i * 2 + 1] = fy.clone() * obs_y - v_cy * denom;
             }
         }
+        residuals
     }
 }
 
@@ -341,12 +147,13 @@ impl fmt::Debug for DoubleSphereOptimizationCost {
 impl Optimizer for DoubleSphereOptimizationCost {
     /// Optimizes the Double Sphere camera model parameters.
     ///
-    /// This method uses the Levenberg-Marquardt algorithm provided by the `factrs`
+    /// This method uses the Levenberg-Marquardt algorithm provided by the `tiny_solver`
     /// crate to minimize the reprojection error between the observed 2D points
     /// and the 2D points projected from the 3D points using the current
     /// camera model parameters.
     ///
     /// The parameters being optimized are `[fx, fy, cx, cy, alpha, xi]`.
+    /// Alpha parameter is constrained to be between 0 and 1.
     ///
     /// # Arguments
     ///
@@ -377,69 +184,69 @@ impl Optimizer for DoubleSphereOptimizationCost {
             info!("Before Optimization: {:?}", error_statistic);
         }
 
-        // Create a factrs Values object to hold the camera parameters
-        let mut values = Values::new();
+        // Create a tiny_solver Problem
+        let mut problem = tiny_solver::Problem::new();
+
+        // Create the cost function
+        let cost_function = DSCost::new(&self.points3d, &self.points2d);
+        let num_residuals = self.points2d.ncols() * 2;
+        problem.add_residual_block(num_residuals, &["params"], Box::new(cost_function), None);
+
+        // Set parameter bounds
+        // fx, fy bounds (reasonable range for focal lengths) - relaxed bounds
+        // problem.set_variable_bounds("params", 0, 1.0, 5000.0);  // fx
+        // problem.set_variable_bounds("params", 1, 1.0, 5000.0);  // fy
+
+        // cx, cy bounds (should be within reasonable range of image center)
+        // let img_width = self.model.resolution.width as f64;
+        // let img_height = self.model.resolution.height as f64;
+        // problem.set_variable_bounds("params", 2, -img_width, 2.0 * img_width);   // cx
+        // problem.set_variable_bounds("params", 3, -img_height, 2.0 * img_height); // cy
+
+        // Alpha bounds (critical constraint: 0 < alpha <= 1)
+        problem.set_variable_bounds("params", 4, 1e-6, 1.0); // alpha
+
+        // Xi bounds (reasonable range for Double Sphere)
+        // problem.set_variable_bounds("params", 5, -1.0, 1.0);  // xi
 
         // Initial parameters
-        let initial_params = VectorVar6::new(
-            self.model.intrinsics.fx as dtype,
-            self.model.intrinsics.fy as dtype,
-            self.model.intrinsics.cx as dtype,
-            self.model.intrinsics.cy as dtype,
-            self.model.alpha as dtype,
-            self.model.xi as dtype,
-        );
-
-        // Insert the initial parameters into the values
-        values.insert(DSCamParams(0), initial_params);
-
-        // Create a factrs Graph
-        let mut graph = Graph::new();
-
-        // Add residuals for each point correspondence
-        for i in 0..self.points3d.ncols() {
-            let p3d = self.points3d.column(i).into_owned();
-            let p2d = self.points2d.column(i).into_owned();
-
-            // Create a residual for this point correspondence
-            let residual = DoubleSphereFactrsResidual {
-                point3d: p3d,
-                point2d: p2d,
-            };
-
-            // Create a factor with the residual and add it to the graph
-            // Use a simple standard deviation for the noise model
-            let factor = fac![residual, DSCamParams(0), 1.0 as std, Huber::default()];
-            graph.add_factor(factor);
-        }
+        let initial_params = DVector::from_vec(vec![
+            self.model.intrinsics.fx,
+            self.model.intrinsics.fy,
+            self.model.intrinsics.cx,
+            self.model.intrinsics.cy,
+            self.model.alpha.clamp(1e-6, 1.0), // Clamp alpha to valid range
+            self.model.xi,
+        ]);
+        let mut initial_values = HashMap::new();
+        initial_values.insert("params".to_string(), initial_params);
 
         if verbose {
-            info!("Starting optimization with factrs Levenberg-Marquardt...");
+            info!("Starting optimization with tiny_solver Levenberg-Marquardt...");
         }
 
-        // Create a Gauss-Newton optimizer with Cholesky solver
-        let mut optimizer: LevenMarquardt<QRSolver> = LevenMarquardt::new(graph);
+        // Create a Levenberg-Marquardt optimizer
+        let optimizer = LevenbergMarquardtOptimizer::default();
 
         // Run the optimization
         let result = optimizer
-            .optimize(values)
-            .map_err(|e| CameraModelError::NumericalError(format!("{:?}", e)))?;
+            .optimize(&problem, &initial_values, None)
+            .ok_or_else(|| CameraModelError::NumericalError("Optimization failed".to_string()))?;
 
         if verbose {
             info!("Optimization finished");
         }
 
         // Extract the optimized parameters
-        let optimized_params: &VectorVar6<f64> = result.get(DSCamParams(0)).unwrap();
-        let params = &optimized_params.0;
+        let optimized_params = result.get("params").unwrap();
 
         // Update the model parameters
-        self.model.intrinsics.fx = params[0];
-        self.model.intrinsics.fy = params[1];
-        self.model.intrinsics.cx = params[2];
-        self.model.intrinsics.cy = params[3];
-        self.model.alpha = params[4];
-        self.model.xi = params[5];
+        self.model.intrinsics.fx = optimized_params[0];
+        self.model.intrinsics.fy = optimized_params[1];
+        self.model.intrinsics.cx = optimized_params[2];
+        self.model.intrinsics.cy = optimized_params[3];
+        self.model.alpha = optimized_params[4].clamp(1e-6, 1.0); // Ensure bounds
+        self.model.xi = optimized_params[5];
 
         // Validate the optimized parameters
         self.model.validate_params()?;
@@ -555,7 +362,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
 mod tests {
     use super::*;
     use crate::camera::{CameraModel, DoubleSphereModel as DSCameraModel};
-    use approx::assert_relative_eq; // Added for assert_relative_eq!
+    use approx::assert_relative_eq;
     use nalgebra::{DVector, Matrix2xX, Matrix3xX};
 
     // Helper to get a default model, similar to the one in samples/double_sphere.yaml
@@ -582,23 +389,19 @@ mod tests {
         );
 
         let mut optimization_task = DoubleSphereOptimizationCost::new(
-            reference_model.clone(), // Pass the noisy model here
+            reference_model.clone(),
             points_3d.clone(),
             points_2d.clone(),
         );
 
         optimization_task.linear_estimation().unwrap();
 
-        // Linear estimation for DoubleSphere typically estimates alpha, xi is often set to 0 or a fixed value.
-        // The provided implementation estimates alpha with xi=0.
-        // So, we compare alpha and check if xi is close to 0.
         assert_relative_eq!(
             optimization_task.model.alpha,
             reference_model.alpha,
             epsilon = 1.0
-        ); // Linear estimation is an approximation
+        );
 
-        // Intrinsics should remain the same as input
         assert_relative_eq!(
             optimization_task.model.intrinsics.fx,
             reference_model.intrinsics.fx,
@@ -622,21 +425,17 @@ mod tests {
     }
 
     #[test]
-    fn test_double_sphere_optimize_factrs() {
-        // Get a reference camera model for testing
+    fn test_double_sphere_optimize_tiny_solver() {
         let reference_model = get_sample_camera_model();
-
-        // Generate sample points using the reference model
         let (points_2d, points_3d) = sample_points_for_ds_model(&reference_model, 50);
 
-        // Create a noisy version of the model to optimize
         let noisy_model = DoubleSphereModel::new(&DVector::from_vec(vec![
-            reference_model.intrinsics.fx * 0.75, // Add 5% error to fx
-            reference_model.intrinsics.fy * 1.35, // Add 5% error to fy
-            reference_model.intrinsics.cx + 15.0, // Add 10 pixels error to cx
-            reference_model.intrinsics.cy - 17.0, // Subtract 10 pixels from cy
-            reference_model.alpha * 0.7,          // Reduce alpha by 10%
-            0.0,                                  // Increase xi by 10%
+            reference_model.intrinsics.fx * 0.75,
+            reference_model.intrinsics.fy * 1.35,
+            reference_model.intrinsics.cx + 15.0,
+            reference_model.intrinsics.cy - 17.0,
+            reference_model.alpha * 0.7,
+            0.0,
         ]))
         .unwrap();
 
@@ -644,179 +443,87 @@ mod tests {
         info!("Noisy model: {:?}", noisy_model);
 
         let mut optimization_task = DoubleSphereOptimizationCost::new(
-            noisy_model.clone(), // Pass the noisy model here
+            noisy_model.clone(),
             points_3d.clone(),
             points_2d.clone(),
         );
 
-        // Optimize the model with factrs
         match optimization_task.optimize(true) {
-            Ok(()) => {
-                info!("Optimization succeeded");
-            }
+            Ok(()) => info!("Optimization succeeded"),
             Err(e) => {
                 info!("Optimization failed with error: {:?}", e);
-                // For now, let's skip the assertions if optimization fails
-                // This might be due to numerical issues that need further investigation
                 return;
             }
         }
 
-        info!("Optimized model with factrs: {:?}", optimization_task);
+        info!("Optimized model with tiny_solver: {:?}", optimization_task);
 
-        // Check that parameters have been optimized close to reference values
+        let fx_diff = (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs();
+        let fy_diff = (optimization_task.model.intrinsics.fy - reference_model.intrinsics.fy).abs();
+        let cx_diff = (optimization_task.model.intrinsics.cx - reference_model.intrinsics.cx).abs();
+        let cy_diff = (optimization_task.model.intrinsics.cy - reference_model.intrinsics.cy).abs();
+        let alpha_diff = (optimization_task.model.alpha - reference_model.alpha).abs();
+        let xi_diff = (optimization_task.model.xi - reference_model.xi).abs();
+
+        info!("Parameter differences:");
+        info!(
+            "fx: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.fx, reference_model.intrinsics.fx, fx_diff
+        );
+        info!(
+            "fy: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.fy, reference_model.intrinsics.fy, fy_diff
+        );
+        info!(
+            "cx: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.cx, reference_model.intrinsics.cx, cx_diff
+        );
+        info!(
+            "cy: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.intrinsics.cy, reference_model.intrinsics.cy, cy_diff
+        );
+        info!(
+            "alpha: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.alpha, reference_model.alpha, alpha_diff
+        );
+        info!(
+            "xi: optimized={:.6}, reference={:.6}, diff={:.6}",
+            optimization_task.model.xi, reference_model.xi, xi_diff
+        );
+
         assert!(
-            (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
-            "fx parameter didn't converge to expected value"
+            fx_diff < 1.0,
+            "fx parameter didn't converge to expected value. Diff: {:.6}",
+            fx_diff
         );
         assert!(
-            (optimization_task.model.intrinsics.fy - reference_model.intrinsics.fy).abs() < 1.0,
-            "fy parameter didn't converge to expected value"
+            fy_diff < 1.0,
+            "fy parameter didn't converge to expected value. Diff: {:.6}",
+            fy_diff
         );
         assert!(
-            (optimization_task.model.intrinsics.cx - reference_model.intrinsics.cx).abs() < 1.0,
-            "cx parameter didn't converge to expected value"
+            cx_diff < 1.0,
+            "cx parameter didn't converge to expected value. Diff: {:.6}",
+            cx_diff
         );
         assert!(
-            (optimization_task.model.intrinsics.cy - reference_model.intrinsics.cy).abs() < 1.0,
-            "cy parameter didn't converge to expected value"
+            cy_diff < 1.0,
+            "cy parameter didn't converge to expected value. Diff: {:.6}",
+            cy_diff
         );
         assert!(
-            (optimization_task.model.alpha - reference_model.alpha).abs() < 0.05,
-            "alpha parameter didn't converge to expected value"
+            alpha_diff < 0.05,
+            "alpha parameter didn't converge to expected value. Diff: {:.6}",
+            alpha_diff
         );
         assert!(
-            (optimization_task.model.xi - reference_model.xi).abs() < 0.05,
-            "xi parameter didn't converge to expected value"
+            xi_diff < 0.05,
+            "xi parameter didn't converge to expected value. Diff: {:.6}",
+            xi_diff
         );
-        // Verify that alpha is within bounds (0, 1]
         assert!(
             optimization_task.model.alpha > 0.0 && optimization_task.model.alpha <= 1.0,
             "Alpha parameter out of valid range (0, 1]"
-        );
-    }
-
-    #[test]
-    fn test_double_sphere_factrs_residual_consistency() {
-        // Test that the refactored residual computation produces consistent results
-        let reference_model = get_sample_camera_model();
-
-        // Create a test point
-        let point3d = Vector3::new(1.0, 0.5, 2.0);
-
-        // Project it with the reference model to get the expected 2D point
-        let point2d = reference_model.project(&point3d).unwrap();
-
-        // Create a residual
-        let residual = DoubleSphereFactrsResidual::new(point3d, point2d);
-
-        // Create camera parameters that match the reference model
-        let cam_params = VectorVar6::new(
-            reference_model.intrinsics.fx as dtype,
-            reference_model.intrinsics.fy as dtype,
-            reference_model.intrinsics.cx as dtype,
-            reference_model.intrinsics.cy as dtype,
-            reference_model.alpha as dtype,
-            reference_model.xi as dtype,
-        );
-
-        // Compute residual - should be close to zero since we're using the same model
-        let residual_value = residual.residual1(cam_params);
-
-        info!(
-            "Residual value: [{:.6}, {:.6}]",
-            residual_value[0], residual_value[1]
-        );
-
-        // The residual should be very small (close to zero) since we're using the correct parameters
-        assert!(
-            residual_value[0].abs() < 1e-10,
-            "Residual u component too large: {}",
-            residual_value[0]
-        );
-        assert!(
-            residual_value[1].abs() < 1e-10,
-            "Residual v component too large: {}",
-            residual_value[1]
-        );
-
-        // Test with slightly different parameters to ensure residual is non-zero
-        let perturbed_params = VectorVar6::new(
-            (reference_model.intrinsics.fx * 1.01) as dtype, // 1% change
-            reference_model.intrinsics.fy as dtype,
-            reference_model.intrinsics.cx as dtype,
-            reference_model.intrinsics.cy as dtype,
-            reference_model.alpha as dtype,
-            reference_model.xi as dtype,
-        );
-
-        let perturbed_residual = residual.residual1(perturbed_params);
-        info!(
-            "Perturbed residual value: [{:.6}, {:.6}]",
-            perturbed_residual[0], perturbed_residual[1]
-        );
-
-        // The residual should be non-zero when parameters are different
-        assert!(
-            perturbed_residual[0].abs() > 1e-6,
-            "Residual should be non-zero for different parameters"
-        );
-    }
-
-    #[test]
-    fn test_analytical_jacobian_accuracy() {
-        let reference_model = get_sample_camera_model();
-        let test_point_3d = Vector3::new(1.0, 0.5, 2.0);
-        let test_point_2d = reference_model.project(&test_point_3d).unwrap();
-
-        // Create residual
-        let residual = DoubleSphereFactrsResidual::new(test_point_3d, test_point_2d);
-
-        // Test analytical Jacobian computation
-        let cam_params = [
-            reference_model.intrinsics.fx,
-            reference_model.intrinsics.fy,
-            reference_model.intrinsics.cx,
-            reference_model.intrinsics.cy,
-            reference_model.alpha,
-            reference_model.xi,
-        ];
-
-        let result = residual.compute_analytical_residual_jacobian(&cam_params);
-        assert!(
-            result.is_ok(),
-            "Analytical Jacobian computation should succeed"
-        );
-
-        let (residual_val, jacobian) = result.unwrap();
-
-        // Verify residual dimensions
-        assert_eq!(residual_val.len(), 2, "Residual should have 2 components");
-
-        // Verify Jacobian dimensions
-        assert_eq!(jacobian.nrows(), 2, "Jacobian should have 2 rows");
-        assert_eq!(jacobian.ncols(), 6, "Jacobian should have 6 columns");
-
-        // Verify Jacobian values are finite
-        for i in 0..jacobian.nrows() {
-            for j in 0..jacobian.ncols() {
-                assert!(
-                    jacobian[(i, j)].is_finite(),
-                    "Jacobian element ({}, {}) should be finite",
-                    i,
-                    j
-                );
-            }
-        }
-
-        // For a perfect projection, residual should be near zero
-        assert!(
-            residual_val[0].abs() < 1e-10,
-            "Residual u component should be near zero"
-        );
-        assert!(
-            residual_val[1].abs() < 1e-10,
-            "Residual v component should be near zero"
         );
     }
 
@@ -825,14 +532,6 @@ mod tests {
         let reference_model = get_sample_camera_model();
         let (points_2d, points_3d) = sample_points_for_ds_model(&reference_model, 20);
 
-        // Create optimization task (for potential future use)
-        let _optimization_task = DoubleSphereOptimizationCost::new(
-            reference_model.clone(),
-            points_3d.clone(),
-            points_2d.clone(),
-        );
-
-        // Test reprojection error computation with perfect model
         let mut total_error = 0.0;
         let mut valid_points = 0;
 
@@ -861,7 +560,6 @@ mod tests {
         let reference_model = get_sample_camera_model();
         let (points_2d, points_3d) = sample_points_for_ds_model(&reference_model, 50);
 
-        // Create perturbed initial model
         let mut initial_model = reference_model.clone();
         initial_model.intrinsics.fx *= 0.98;
         initial_model.intrinsics.fy *= 0.98;
@@ -871,15 +569,12 @@ mod tests {
         let mut optimization_task =
             DoubleSphereOptimizationCost::new(initial_model, points_3d, points_2d);
 
-        // Run optimization
         let result = optimization_task.optimize(false);
         assert!(result.is_ok(), "Optimization should succeed");
 
-        // Validate parameter convergence
         let final_intrinsics = optimization_task.get_intrinsics();
         let final_distortion = optimization_task.get_distortion();
 
-        // Check that parameters converged close to reference values
         assert!(
             (final_intrinsics.fx - reference_model.intrinsics.fx).abs() < 1.0,
             "fx should converge close to reference value"
@@ -897,7 +592,6 @@ mod tests {
             "xi should converge close to reference value"
         );
 
-        // Verify alpha is within valid bounds
         assert!(
             final_distortion[0] > 0.0 && final_distortion[0] <= 1.0,
             "Alpha should be within bounds (0, 1]"

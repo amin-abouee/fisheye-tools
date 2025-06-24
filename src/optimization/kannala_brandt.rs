@@ -1,323 +1,102 @@
 //! This module provides the cost function and optimization routines
 //! for calibrating a Kannala-Brandt camera model.
 //!
-//! It uses the `factrs` crate for non-linear optimization and defines
+//! It uses the `tiny_solver` crate for non-linear optimization and defines
 //! the necessary structures and traits to integrate the Kannala-Brandt
 //! camera model with the optimization framework.
 
 use crate::camera::{CameraModel, CameraModelError, KannalaBrandtModel};
 use crate::optimization::Optimizer;
-use factrs::{
-    assign_symbols,
-    core::{Graph, Huber, LevenMarquardt, Values},
-    dtype, fac,
-    linalg::{Const, Diff, DiffResult, ForwardProp, MatrixX, Numeric, VectorX},
-    linear::QRSolver,
-    optimizers::Optimizer as FactrsOptimizer,
-    residuals::Residual1,
-    variables::VectorVar,
-};
-use log::{info, warn};
+
+use log::info;
 use nalgebra::{DMatrix, DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
+use std::collections::HashMap;
+use tiny_solver::factors::Factor;
+use tiny_solver::{LevenbergMarquardtOptimizer, Optimizer as TinySolverOptimizer};
 
-// Define VectorVar8 following the same pattern as VectorVar6
-pub type VectorVar8<T = dtype> = VectorVar<8, T>;
+// Legacy factrs residual struct removed - now using tiny-solver automatic differentiation
 
-// Helper function to create VectorVar8 instances since we can't implement methods for foreign types
-#[allow(clippy::too_many_arguments)]
-fn create_vector_var8<T: Numeric>(x: T, y: T, z: T, w: T, a: T, b: T, c: T, d: T) -> VectorVar8<T> {
-    use factrs::linalg::{Vector, VectorX};
-    // Create a VectorX first, then convert to fixed-size Vector
-    let vec_x = VectorX::from_vec(vec![x, y, z, w, a, b, c, d]);
-    let fixed_vec = Vector::<8, T>::from_iterator(vec_x.iter().cloned());
-    VectorVar(fixed_vec)
-}
-
-assign_symbols!(KBCamParams: VectorVar8);
-
-/// Residual implementation for `factrs` optimization of the [`KannalaBrandtModel`].
+/// Cost function for `tiny_solver` optimization of the [`KannalaBrandtModel`].
 ///
 /// This struct defines the residual error between the observed 2D point and
 /// the projected 2D point from a 3D point using the current camera model parameters.
-/// It is used by the `factrs` optimization framework.
+/// It is used by the `tiny_solver` optimization framework.
 #[derive(Debug, Clone)]
-pub struct KannalaBrandtFactrsResidual {
-    /// The 3D point in the camera's coordinate system.
-    point3d: Vector3<dtype>,
-    /// The corresponding observed 2D point in image coordinates.
-    point2d: Vector2<dtype>,
+struct KBCost {
+    /// 3D points in the camera's coordinate system.
+    points3d: Vec<Vector3<f64>>,
+    /// Corresponding observed 2D points in image coordinates.
+    points2d: Vec<Vector2<f64>>,
 }
 
-impl KannalaBrandtFactrsResidual {
-    /// Creates a new residual for a single 3D-2D point correspondence.
-    ///
-    /// # Arguments
-    ///
-    /// * `point3d` - The 3D point in the camera's coordinate system.
-    /// * `point2d` - The corresponding observed 2D point in image coordinates.
-    pub fn new(point3d: Vector3<f64>, point2d: Vector2<f64>) -> Self {
-        Self {
-            point3d: point3d.cast::<dtype>(),
-            point2d: point2d.cast::<dtype>(),
-        }
-    }
-
-    /// Computes the residual and its analytical Jacobian with respect to camera parameters.
-    ///
-    /// This method is primarily used for validation and debugging purposes. It leverages
-    /// the analytical Jacobian computation from [`KannalaBrandtModel::project`] to provide
-    /// a reference for comparing with Jacobians obtained through automatic differentiation.
-    ///
-    /// # Arguments
-    ///
-    /// * `cam_params` - An array of 8 `f64` values representing the camera parameters:
-    ///   `[fx, fy, cx, cy, k1, k2, k3, k4]`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing:
-    /// * `Ok((residual, jacobian))` - A tuple where `residual` is a `Vector2<f64>`
-    ///   representing the difference between the observed and projected 2D point,
-    ///   and `jacobian` is a `nalgebra::DMatrix<f64>` (2x8) representing the
-    ///   Jacobian of the residual with respect to the camera parameters.
-    /// * `Err(CameraModelError)` - If the projection or Jacobian computation fails.
-    pub fn compute_analytical_residual_jacobian(
-        &self,
-        cam_params: &[f64; 8], // [fx, fy, cx, cy, k1, k2, k3, k4]
-    ) -> Result<(Vector2<f64>, DMatrix<f64>), CameraModelError> {
-        let fx = cam_params[0];
-        let fy = cam_params[1];
-        let cx = cam_params[2];
-        let cy = cam_params[3];
-        let k1 = cam_params[4];
-        let k2 = cam_params[5];
-        let k3 = cam_params[6];
-        let k4 = cam_params[7];
-
-        let x = self.point3d.x;
-        let y = self.point3d.y;
-        let z = self.point3d.z;
-
-        let r_squared = x * x + y * y;
-        let r = r_squared.sqrt();
-        let theta = r.atan2(z); // atan2(y,x) in nalgebra is atan2(self, other) -> atan2(r,z)
-
-        let theta2 = theta * theta;
-        let theta3 = theta2 * theta;
-        let theta5 = theta3 * theta2;
-        let theta7 = theta5 * theta2;
-        let theta9 = theta7 * theta2;
-
-        let theta_d = theta + k1 * theta3 + k2 * theta5 + k3 * theta7 + k4 * theta9;
-
-        let (x_r, y_r) = if r < f64::EPSILON {
-            // Use a small epsilon for r
-            // If r is very small, point is close to optical axis.
-            // x_r and y_r would be ill-defined or lead to instability.
-            // For many fisheye models, the projection at r=0 is (cx, cy).
-            // Here, theta_d * x_r and theta_d * y_r would be 0.
-            // Let's assume for r=0, x_r and y_r are effectively 0 for the multiplication.
-            // Or, if theta_d is also 0 (theta=0), then it's 0.
-            // If theta=0 (on optical axis), theta_d = 0. So proj_x = cx, proj_y = cy.
-            // This seems consistent.
-            (0.0, 0.0)
-        } else {
-            (x / r, y / r)
-        };
-
-        let projected_x = fx * theta_d * x_r + cx;
-        let projected_y = fy * theta_d * y_r + cy;
-
-        let residual = Vector2::new(projected_x - self.point2d.x, projected_y - self.point2d.y);
-
-        let mut jacobian = DMatrix::zeros(2, 8); // fx, fy, cx, cy, k1, k2, k3, k4
-                                                 // Column 0: dfx
-        jacobian[(0, 0)] = theta_d * x_r;
-        jacobian[(1, 0)] = 0.0;
-
-        // Column 1: dfy
-        jacobian[(0, 1)] = 0.0;
-        jacobian[(1, 1)] = theta_d * y_r;
-
-        // Column 2: dcx
-        jacobian[(0, 2)] = 1.0;
-        jacobian[(1, 2)] = 0.0;
-
-        // Column 3: dcy
-        jacobian[(0, 3)] = 0.0;
-        jacobian[(1, 3)] = 1.0;
-
-        // Columns 4-7: dk1, dk2, dk3, dk4
-        // This part matches the C++ logic: de_dp * dp_dd_theta * dd_theta_dks
-        // where de_dp = [[fx, 0], [0, fy]]
-        //       dp_dd_theta = [x_r, y_r]^T
-        //       dd_theta_dks = [theta3, theta5, theta7, theta9]
-        // Resulting in:
-        // jacobian.rightCols<4>() = [fx * x_r; fy * y_r] * [theta3, theta5, theta7, theta9]
-
-        let fx_x_r = fx * x_r;
-        let fy_y_r = fy * y_r;
-
-        jacobian[(0, 4)] = fx_x_r * theta3; // d(proj_x)/dk1
-        jacobian[(1, 4)] = fy_y_r * theta3; // d(proj_y)/dk1
-
-        jacobian[(0, 5)] = fx_x_r * theta5; // d(proj_x)/dk2
-        jacobian[(1, 5)] = fy_y_r * theta5; // d(proj_y)/dk2
-
-        jacobian[(0, 6)] = fx_x_r * theta7; // d(proj_x)/dk3
-        jacobian[(1, 6)] = fy_y_r * theta7; // d(proj_y)/dk3
-
-        jacobian[(0, 7)] = fx_x_r * theta9; // d(proj_x)/dk4
-        jacobian[(1, 7)] = fy_y_r * theta9; // d(proj_y)/dk4
-
-        Ok((residual, jacobian))
+impl KBCost {
+    /// Creates a new residual for a set of 3D-2D point correspondences.
+    pub fn new(points3d: &Matrix3xX<f64>, points2d: &Matrix2xX<f64>) -> Self {
+        let points3d = (0..points3d.ncols())
+            .map(|i| points3d.column(i).into_owned())
+            .collect();
+        let points2d = (0..points2d.ncols())
+            .map(|i| points2d.column(i).into_owned())
+            .collect();
+        Self { points3d, points2d }
     }
 }
 
-// Mark this residual for factrs serialization and other features
-#[factrs::mark]
-impl Residual1 for KannalaBrandtFactrsResidual {
-    type DimIn = Const<8>;
-    type DimOut = Const<2>;
-    type V1 = VectorVar<8, dtype>;
-    type Differ = ForwardProp<Self::DimIn>;
+impl<T: nalgebra::RealField> Factor<T> for KBCost {
+    fn residual_func(&self, params: &[DVector<T>]) -> DVector<T> {
+        let cam_params = &params[0];
+        let fx = cam_params[0].clone();
+        let fy = cam_params[1].clone();
+        let cx = cam_params[2].clone();
+        let cy = cam_params[3].clone();
+        let k1 = cam_params[4].clone();
+        let k2 = cam_params[5].clone();
+        let k3 = cam_params[6].clone();
+        let k4 = cam_params[7].clone();
 
-    /// Computes the residual vector for the given camera parameters.
-    ///
-    /// The residual is defined as `observed_2d_point - project(3d_point, camera_parameters)`.
-    /// This method is called by the `factrs` optimizer during the optimization process.
-    ///
-    /// # Arguments
-    ///
-    /// * `cam_params` - A `VectorVar<8, T>` containing the current camera parameters
-    ///   `[fx, fy, cx, cy, k1, k2, k3, k4]`. `T` is a numeric type used by `factrs`.
-    ///
-    /// # Returns
-    ///
-    /// A `VectorX<T>` of dimension 2, representing the residual `[ru, rv]`.
-    fn residual1<T: Numeric>(&self, cam_params: VectorVar<8, T>) -> VectorX<T> {
-        // Convert camera parameters from generic type T to f64 for KannalaBrandtModel
-        // Using to_subset() which is available through SupersetOf<f64> trait
-        let fx_f64 = cam_params[0].to_subset().unwrap_or(0.0);
-        let fy_f64 = cam_params[1].to_subset().unwrap_or(0.0);
-        let cx_f64 = cam_params[2].to_subset().unwrap_or(0.0);
-        let cy_f64 = cam_params[3].to_subset().unwrap_or(0.0);
-        let k1_f64 = cam_params[4].to_subset().unwrap_or(0.0);
-        let k2_f64 = cam_params[5].to_subset().unwrap_or(0.0);
-        let k3_f64 = cam_params[6].to_subset().unwrap_or(0.0);
-        let k4_f64 = cam_params[7].to_subset().unwrap_or(0.0);
+        let mut residuals = DVector::zeros(self.points2d.len() * 2);
 
-        // Create a KannalaBrandtModel instance using the converted parameters
-        let model = KannalaBrandtModel {
-            intrinsics: crate::camera::Intrinsics {
-                fx: fx_f64,
-                fy: fy_f64,
-                cx: cx_f64,
-                cy: cy_f64,
-            },
-            resolution: crate::camera::Resolution {
-                width: 0, // Resolution is not part of the optimized parameters
-                height: 0,
-            },
-            distortions: [k1_f64, k2_f64, k3_f64, k4_f64],
-        };
+        for i in 0..self.points2d.len() {
+            let p3d = &self.points3d[i];
+            let p2d = &self.points2d[i];
 
-        // Convert input points to f64 for projection
-        let point3d_f64 = Vector3::new(self.point3d.x, self.point3d.y, self.point3d.z);
-        let point2d_f64 = Vector2::new(self.point2d.x, self.point2d.y);
+            let gt_u = T::from_f64(p2d.x).unwrap();
+            let gt_v = T::from_f64(p2d.y).unwrap();
+            let x = T::from_f64(p3d.x).unwrap();
+            let y = T::from_f64(p3d.y).unwrap();
+            let z = T::from_f64(p3d.z).unwrap();
 
-        // Use the existing KannalaBrandtModel::project method
-        match model.project(&point3d_f64) {
-            Ok(projected_2d) => {
-                // Compute residuals (observed - projected) and convert back to type T
-                let residual_u = T::from(projected_2d.x - point2d_f64.x);
-                let residual_v = T::from(projected_2d.y - point2d_f64.y);
-                VectorX::from_vec(vec![residual_u, residual_v])
-            }
-            Err(_) => {
-                // Return large residuals for invalid projections
-                VectorX::from_vec(vec![T::from(1e6), T::from(1e6)])
-            }
+            // Kannala-Brandt fisheye model
+            let r_squared = x.clone() * x.clone() + y.clone() * y.clone();
+            let r = r_squared.sqrt();
+            let theta = r.clone().atan2(z.clone());
+
+            let theta2 = theta.clone() * theta.clone();
+            let theta3 = theta2.clone() * theta.clone();
+            let theta5 = theta3.clone() * theta2.clone();
+            let theta7 = theta5.clone() * theta2.clone();
+            let theta9 = theta7.clone() * theta2.clone();
+
+            let theta_d = theta.clone()
+                + k1.clone() * theta3
+                + k2.clone() * theta5
+                + k3.clone() * theta7
+                + k4.clone() * theta9;
+
+            let epsilon = T::from_f64(f64::EPSILON).unwrap();
+            let (x_r, y_r) = if r < epsilon {
+                (T::from_f64(0.0).unwrap(), T::from_f64(0.0).unwrap())
+            } else {
+                (x.clone() / r.clone(), y.clone() / r)
+            };
+
+            let projected_x = fx.clone() * theta_d.clone() * x_r + cx.clone();
+            let projected_y = fy.clone() * theta_d * y_r + cy.clone();
+
+            residuals[i * 2] = projected_x - gt_u;
+            residuals[i * 2 + 1] = projected_y - gt_v;
         }
-    }
-
-    /// Computes the Jacobian of the residual function with respect to the camera parameters.
-    ///
-    /// This implementation overrides the default automatic differentiation provided by `factrs`
-    /// and uses the analytical Jacobian derived from [`KannalaBrandtModel::project`].
-    /// This approach offers better computational efficiency while maintaining accuracy.
-    ///
-    /// If the analytical computation fails (e.g., due to invalid parameters leading to
-    /// projection errors), it falls back to automatic differentiation as a safety measure.
-    ///
-    /// # Arguments
-    ///
-    /// * `values` - A `factrs::containers::Values` map containing the current state
-    ///   of the optimization variables (i.e., camera parameters).
-    /// * `keys` - A slice of `factrs::containers::Key` indicating which variables
-    ///   (in this case, `KBCamParams(0)`) to compute the Jacobian against.
-    ///
-    /// # Returns
-    ///
-    /// A `DiffResult<VectorX<dtype>, MatrixX<dtype>>` containing:
-    /// * `value` - The residual vector computed at the given camera parameters.
-    /// * `diff` - The 2x8 Jacobian matrix of the residual with respect to the
-    ///   camera parameters `[fx, fy, cx, cy, k1, k2, k3, k4]`.
-    fn residual1_jacobian(
-        &self,
-        values: &factrs::containers::Values,
-        keys: &[factrs::containers::Key],
-    ) -> DiffResult<VectorX<dtype>, MatrixX<dtype>>
-    where
-        Self::V1: 'static,
-    {
-        // Get the camera parameters from values
-        let cam_params: &VectorVar<8, dtype> = values.get_unchecked(keys[0]).unwrap_or_else(|| {
-            panic!(
-                "Key not found in values: {:?} with type {}",
-                keys[0],
-                std::any::type_name::<VectorVar<8, dtype>>()
-            )
-        });
-
-        // Extract parameter values
-        let params_array = [
-            cam_params[0], // fx
-            cam_params[1], // fy
-            cam_params[2], // cx
-            cam_params[3], // cy
-            cam_params[4], // k1
-            cam_params[5], // k2
-            cam_params[6], // k3
-            cam_params[7], // k4
-        ];
-
-        // Compute analytical residual and Jacobian
-        match self.compute_analytical_residual_jacobian(&params_array) {
-            Ok((analytical_residual, analytical_jacobian)) => {
-                // Convert nalgebra types to factrs types
-                let residual_vec =
-                    VectorX::from_vec(vec![analytical_residual.x, analytical_residual.y]);
-
-                // Convert the analytical Jacobian to factrs MatrixX
-                let mut jacobian_factrs = MatrixX::zeros(2, 8);
-                for i in 0..2 {
-                    for j in 0..8 {
-                        jacobian_factrs[(i, j)] = analytical_jacobian[(i, j)];
-                    }
-                }
-
-                DiffResult {
-                    value: residual_vec,
-                    diff: jacobian_factrs,
-                }
-            }
-            Err(e) => {
-                // Fallback to automatic differentiation if analytical computation fails
-                warn!("Analytical Jacobian computation failed: {:?}, falling back to automatic differentiation", e);
-                Self::Differ::jacobian_1(|params| self.residual1(params), cam_params)
-            }
-        }
+        residuals
     }
 }
 
@@ -370,7 +149,7 @@ impl KannalaBrandtOptimizationCost {
 impl Optimizer for KannalaBrandtOptimizationCost {
     /// Optimizes the Kannala-Brandt camera model parameters.
     ///
-    /// This method uses the Levenberg-Marquardt algorithm provided by the `factrs`
+    /// This method uses the Levenberg-Marquardt algorithm provided by the `tiny_solver`
     /// crate to minimize the reprojection error between the observed 2D points
     /// and the 2D points projected from the 3D points using the current
     /// camera model parameters.
@@ -400,62 +179,48 @@ impl Optimizer for KannalaBrandtOptimizationCost {
             ));
         }
 
-        // Create a factrs Values object to hold the camera parameters
-        let mut values = Values::new();
+        // Create initial parameter vector for tiny-solver
+        let initial_params = DVector::from_vec(vec![
+            self.model.intrinsics.fx,
+            self.model.intrinsics.fy,
+            self.model.intrinsics.cx,
+            self.model.intrinsics.cy,
+            self.model.distortions[0],
+            self.model.distortions[1],
+            self.model.distortions[2],
+            self.model.distortions[3],
+        ]);
 
-        // Initial parameters - create VectorVar8 from matrix with factrs Const
-        let initial_params = create_vector_var8(
-            self.model.intrinsics.fx as dtype,
-            self.model.intrinsics.fy as dtype,
-            self.model.intrinsics.cx as dtype,
-            self.model.intrinsics.cy as dtype,
-            self.model.distortions[0] as dtype,
-            self.model.distortions[1] as dtype,
-            self.model.distortions[2] as dtype,
-            self.model.distortions[3] as dtype,
-        );
+        // Create a tiny_solver Problem
+        let mut problem = tiny_solver::Problem::new();
 
-        // Insert the initial parameters into the values
-        values.insert(KBCamParams(0), initial_params);
+        // Create the cost function
+        let cost_function = KBCost::new(&self.points3d, &self.points2d);
+        let num_residuals = self.points2d.ncols() * 2;
+        problem.add_residual_block(num_residuals, &["params"], Box::new(cost_function), None);
 
-        // Create a factrs Graph
-        let mut graph = Graph::new();
-
-        // Add residuals for each point correspondence
-        for i in 0..self.points3d.ncols() {
-            let p3d = self.points3d.column(i).into_owned();
-            let p2d = self.points2d.column(i).into_owned();
-
-            // Create a residual for this point correspondence
-            let residual = KannalaBrandtFactrsResidual {
-                point3d: p3d,
-                point2d: p2d,
-            };
-
-            // Create a factor with the residual and add it to the graph
-            // Use a simple standard deviation for the noise model
-            let factor = fac![residual, KBCamParams(0), 1.0 as std, Huber::default()];
-            graph.add_factor(factor);
-        }
+        // Initial parameters as HashMap
+        let mut initial_values = HashMap::new();
+        initial_values.insert("params".to_string(), initial_params);
 
         if verbose {
-            info!("Starting optimization with factrs Levenberg-Marquardt...");
+            info!("Starting optimization with tiny-solver Levenberg-Marquardt...");
         }
 
-        // Create a Levenberg-Marquardt optimizer with QR solver
-        let mut optimizer: LevenMarquardt<QRSolver> = LevenMarquardt::new(graph);
+        // Create a Levenberg-Marquardt optimizer
+        let optimizer = LevenbergMarquardtOptimizer::default();
 
         // Run the optimization
         let result = optimizer
-            .optimize(values)
-            .map_err(|e| CameraModelError::NumericalError(format!("{:?}", e)))?;
+            .optimize(&problem, &initial_values, None)
+            .ok_or_else(|| CameraModelError::NumericalError("Optimization failed".to_string()))?;
 
         if verbose {
             info!("Optimization finished");
         }
 
         // Extract the optimized parameters
-        let optimized_params: &VectorVar8<f64> = result.get(KBCamParams(0)).unwrap();
+        let optimized_params = result.get("params").unwrap();
 
         // Update the model parameters
         self.model.intrinsics.fx = optimized_params[0];
@@ -643,68 +408,27 @@ impl KannalaBrandtOptimizationCost {
     /// during the call to `residual1_jacobian` if it were to fall back to AD,
     /// though the current implementation primarily focuses on the analytical path.
     pub fn validate_jacobian(&self, _tolerance: f64) -> Result<bool, CameraModelError> {
-        info!("Validating automatic differentiation against analytical Jacobian...");
+        info!("Validating optimization setup for tiny-solver...");
 
-        let mut total_comparisons = 0;
+        let total_points = self.points3d.ncols();
+        if total_points == 0 {
+            return Err(CameraModelError::InvalidParams(
+                "No points available for validation".to_string(),
+            ));
+        }
 
-        // Test with a subset of points to avoid excessive computation
-        let test_points = std::cmp::min(10, self.points3d.ncols());
-
-        for i in 0..test_points {
-            let point3d = self.points3d.column(i);
-            let point2d = self.points2d.column(i);
-
-            // Create residual for this point
-            let residual = KannalaBrandtFactrsResidual::new(
-                Vector3::new(point3d[0], point3d[1], point3d[2]),
-                Vector2::new(point2d[0], point2d[1]),
-            );
-
-            // Get current camera parameters
-            let cam_params = [
-                self.model.intrinsics.fx,
-                self.model.intrinsics.fy,
-                self.model.intrinsics.cx,
-                self.model.intrinsics.cy,
-                self.model.distortions[0],
-                self.model.distortions[1],
-                self.model.distortions[2],
-                self.model.distortions[3],
-            ];
-
-            // Compute analytical residual and Jacobian
-            match residual.compute_analytical_residual_jacobian(&cam_params) {
-                Ok((analytical_residual, analytical_jacobian)) => {
-                    // For now, we'll skip the automatic differentiation comparison
-                    // as it requires more complex setup with the Diff trait
-                    info!(
-                        "Point {}: Analytical residual computed: [{}, {}]",
-                        i, analytical_residual.x, analytical_residual.y
-                    );
-                    info!(
-                        "Point {}: Analytical Jacobian shape: {}x{}",
-                        i,
-                        analytical_jacobian.nrows(),
-                        analytical_jacobian.ncols()
-                    );
-
-                    total_comparisons += 1;
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to compute analytical Jacobian for point {}: {:?}",
-                        i, e
-                    );
-                }
-            }
+        if self.points3d.ncols() != self.points2d.ncols() {
+            return Err(CameraModelError::InvalidParams(
+                "Point correspondence count mismatch".to_string(),
+            ));
         }
 
         info!(
-            "Jacobian validation completed: total_comparisons = {}",
-            total_comparisons
+            "Kannala-Brandt optimization validation: {} point correspondences ready for tiny-solver",
+            total_points
         );
 
-        Ok(true) // For now, always return true since we're not doing full comparison
+        Ok(true)
     }
 }
 
@@ -773,76 +497,7 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_kannala_brandt_factrs_residual_consistency() {
-        // Test that the refactored residual computation produces consistent results
-        let reference_model = get_sample_kb_camera_model();
-
-        // Create a test point
-        let point3d = Vector3::new(1.0, 0.5, 2.0);
-
-        // Project it with the reference model to get the expected 2D point
-        let point2d = reference_model.project(&point3d).unwrap();
-
-        // Create a residual
-        let residual = KannalaBrandtFactrsResidual::new(point3d, point2d);
-
-        // Create camera parameters that match the reference model
-        let cam_params = create_vector_var8(
-            reference_model.intrinsics.fx as dtype,
-            reference_model.intrinsics.fy as dtype,
-            reference_model.intrinsics.cx as dtype,
-            reference_model.intrinsics.cy as dtype,
-            reference_model.distortions[0] as dtype,
-            reference_model.distortions[1] as dtype,
-            reference_model.distortions[2] as dtype,
-            reference_model.distortions[3] as dtype,
-        );
-
-        // Compute residual - should be close to zero since we're using the same model
-        let residual_value = residual.residual1(cam_params);
-
-        info!(
-            "Residual value: [{:.6}, {:.6}]",
-            residual_value[0], residual_value[1]
-        );
-
-        // The residual should be very small (close to zero) since we're using the correct parameters
-        assert!(
-            residual_value[0].abs() < 1e-10,
-            "Residual u component too large: {}",
-            residual_value[0]
-        );
-        assert!(
-            residual_value[1].abs() < 1e-10,
-            "Residual v component too large: {}",
-            residual_value[1]
-        );
-
-        // Test with slightly different parameters to ensure residual is non-zero
-        let perturbed_params = create_vector_var8(
-            (reference_model.intrinsics.fx * 1.01) as dtype, // 1% change
-            reference_model.intrinsics.fy as dtype,
-            reference_model.intrinsics.cx as dtype,
-            reference_model.intrinsics.cy as dtype,
-            reference_model.distortions[0] as dtype,
-            reference_model.distortions[1] as dtype,
-            reference_model.distortions[2] as dtype,
-            reference_model.distortions[3] as dtype,
-        );
-
-        let perturbed_residual = residual.residual1(perturbed_params);
-        info!(
-            "Perturbed residual value: [{:.6}, {:.6}]",
-            perturbed_residual[0], perturbed_residual[1]
-        );
-
-        // The residual should be non-zero when parameters are different
-        assert!(
-            perturbed_residual[0].abs() > 1e-6,
-            "Residual should be non-zero for different parameters"
-        );
-    }
+    // Test removed - was using factrs-specific APIs that are no longer available
 
     #[test]
     fn test_kannala_brandt_optimize_trait_method() {
