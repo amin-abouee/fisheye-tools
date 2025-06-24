@@ -1,6 +1,6 @@
 [package]
 name = "fisheye-tools"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 authors = ["Amin Abouee"]
 description = "A comprehensive Rust library for fisheye and wide-angle camera models with tiny-solver-based optimization"
