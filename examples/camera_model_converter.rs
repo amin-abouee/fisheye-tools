@@ -620,8 +620,6 @@ fn print_detailed_results(metrics: &ConversionMetrics) {
 
     if validation.status == "EXCELLENT" {
         println!("  ✅ Conversion Accuracy: {}", validation.status);
-    } else if validation.status == "GOOD" {
-        println!("  ✅ Conversion Accuracy: {}", validation.status);
     } else {
         println!("  ⚠️  Conversion Accuracy: {}", validation.status);
     }
