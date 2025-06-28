@@ -19,7 +19,7 @@ use fisheye_tools::camera::{
     CameraModel, DoubleSphereModel, Intrinsics, KannalaBrandtModel, RadTanModel, Resolution,
 };
 use fisheye_tools::optimization::Optimizer;
-use fisheye_tools::{geometry, optimization};
+use fisheye_tools::{optimization, util};
 use flexi_logger::{colored_detailed_format, detailed_format, Duplicate, FileSpec, Logger};
 use log::{error, info};
 use nalgebra::{Matrix2xX, Matrix3xX};
@@ -163,7 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_path_str = cli.input_path.to_str().ok_or("Invalid input path string")?;
     let input_model_type = cli.input_model.as_str();
     let input_model = create_input_model(input_model_type, input_path_str)?;
-    let (points_2d, points_3d) = geometry::sample_points(Some(&*input_model), n).unwrap();
+    let (points_2d, points_3d) = util::sample_points(Some(&*input_model), n).unwrap();
     info!("points_2d: {:?}", points_2d.ncols());
     info!("points_3d: {:?}", points_3d.ncols());
 
