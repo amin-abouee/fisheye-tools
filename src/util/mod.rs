@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::Write;
 
 #[derive(thiserror::Error, Debug)]
-pub enum GeometryError {
+pub enum UtilError {
     #[error("Camera model does not exist")]
     CameraModelDoesNotExist,
     #[error("Numerical error in computation: {0}")]
@@ -170,7 +170,7 @@ pub fn compute_reprojection_error<T>(
     camera_model: Option<&T>,
     points3d: &Matrix3xX<f64>,
     points2d: &Matrix2xX<f64>,
-) -> Result<ProjectionError, GeometryError>
+) -> Result<ProjectionError, UtilError>
 where
     T: ?Sized + CameraModel,
 {
@@ -187,7 +187,7 @@ where
     }
 
     if errors.is_empty() {
-        return Err(GeometryError::ZeroProjectionPoints);
+        return Err(UtilError::ZeroProjectionPoints);
     }
 
     // Calculate statistics
@@ -236,10 +236,10 @@ where
 ///
 /// # Returns
 ///
-/// * `Result<f64, GeometryError>` - PSNR value in dB
-pub fn calculate_psnr(img1: &RgbImage, img2: &RgbImage) -> Result<f64, GeometryError> {
+/// * `Result<f64, UtilError>` - PSNR value in dB
+pub fn calculate_psnr(img1: &RgbImage, img2: &RgbImage) -> Result<f64, UtilError> {
     if img1.dimensions() != img2.dimensions() {
-        return Err(GeometryError::InvalidParams(
+        return Err(UtilError::InvalidParams(
             "Images must have the same dimensions".to_string(),
         ));
     }
@@ -292,10 +292,10 @@ pub fn calculate_psnr(img1: &RgbImage, img2: &RgbImage) -> Result<f64, GeometryE
 ///
 /// # Returns
 ///
-/// * `Result<f64, GeometryError>` - SSIM value between 0 and 1
-pub fn calculate_ssim(img1: &RgbImage, img2: &RgbImage) -> Result<f64, GeometryError> {
+/// * `Result<f64, UtilError>` - SSIM value between 0 and 1
+pub fn calculate_ssim(img1: &RgbImage, img2: &RgbImage) -> Result<f64, UtilError> {
     if img1.dimensions() != img2.dimensions() {
-        return Err(GeometryError::InvalidParams(
+        return Err(UtilError::InvalidParams(
             "Images must have the same dimensions".to_string(),
         ));
     }
@@ -403,10 +403,10 @@ fn rgb_to_grayscale(img: &RgbImage) -> GrayImage {
 ///
 /// # Returns
 ///
-/// * `Result<RgbImage, GeometryError>` - Loaded RGB image
-pub fn load_image(image_path: &str) -> Result<RgbImage, GeometryError> {
+/// * `Result<RgbImage, UtilError>` - Loaded RGB image
+pub fn load_image(image_path: &str) -> Result<RgbImage, UtilError> {
     let img = image::open(image_path)
-        .map_err(|e| GeometryError::InvalidParams(format!("Failed to load image: {}", e)))?;
+        .map_err(|e| UtilError::InvalidParams(format!("Failed to load image: {}", e)))?;
 
     Ok(img.to_rgb8())
 }
@@ -422,13 +422,13 @@ pub fn load_image(image_path: &str) -> Result<RgbImage, GeometryError> {
 ///
 /// # Returns
 ///
-/// * `Result<RgbImage, GeometryError>` - Generated image
+/// * `Result<RgbImage, UtilError>` - Generated image
 pub fn get_image(
     points_2d: &Matrix2xX<f64>,
     width: u32,
     height: u32,
     reference_image: Option<&RgbImage>,
-) -> Result<RgbImage, GeometryError> {
+) -> Result<RgbImage, UtilError> {
     let mut img = RgbImage::new(width, height);
 
     // Fill with black background
@@ -470,16 +470,16 @@ pub fn get_image(
 ///
 /// # Returns
 ///
-/// * `Result<(), GeometryError>` - Success or error
+/// * `Result<(), UtilError>` - Success or error
 pub fn export_point_correspondences(
     points_3d: &Matrix3xX<f64>,
     points_2d: &Matrix2xX<f64>,
     filename_prefix: &str,
-) -> Result<(), GeometryError> {
+) -> Result<(), UtilError> {
     println!("\n💾 Exporting Point Correspondences:");
 
     if points_3d.ncols() != points_2d.ncols() {
-        return Err(GeometryError::InvalidParams(
+        return Err(UtilError::InvalidParams(
             "3D and 2D point counts must match".to_string(),
         ));
     }
@@ -487,7 +487,7 @@ pub fn export_point_correspondences(
     // Export to CSV format
     let csv_filename = format!("{}.csv", filename_prefix);
     let mut csv_file = File::create(&csv_filename)
-        .map_err(|e| GeometryError::NumericalError(format!("Failed to create CSV file: {}", e)))?;
+        .map_err(|e| UtilError::NumericalError(format!("Failed to create CSV file: {}", e)))?;
 
     writeln!(
         csv_file,
@@ -509,7 +509,7 @@ pub fn export_point_correspondences(
     // Export to Rust format
     let rust_filename = format!("{}_rust.txt", filename_prefix);
     let mut rust_file = File::create(&rust_filename)
-        .map_err(|e| GeometryError::NumericalError(format!("Failed to create Rust file: {}", e)))?;
+        .map_err(|e| UtilError::NumericalError(format!("Failed to create Rust file: {}", e)))?;
 
     writeln!(rust_file, "// 3D-2D Point Correspondences for Rust Import")?;
     writeln!(rust_file, "// Generated from Rust fisheye-tools")?;
@@ -563,11 +563,11 @@ pub fn export_point_correspondences(
 ///
 /// # Returns
 ///
-/// * `Result<ValidationResults, GeometryError>` - Validation results
+/// * `Result<ValidationResults, UtilError>` - Validation results
 pub fn validate_conversion_accuracy<T>(
     output_model: &T,
     input_model: &dyn CameraModel,
-) -> Result<ValidationResults, GeometryError>
+) -> Result<ValidationResults, UtilError>
 where
     T: CameraModel,
 {
@@ -696,12 +696,12 @@ where
 ///
 /// # Returns
 ///
-/// * `Result<String, GeometryError>` - Image quality assessment report
+/// * `Result<String, UtilError>` - Image quality assessment report
 pub fn assess_image_quality<T1, T2>(
     input_model: &T1,
     output_model: &T2,
     image_path: &str,
-) -> Result<String, GeometryError>
+) -> Result<String, UtilError>
 where
     T1: CameraModel,
     T2: CameraModel,
@@ -995,11 +995,11 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
     println!("📊 Average Reprojection Error: {:.6} pixels", avg_error);
     println!("📊 Average Optimization Time: {:.2} ms", avg_time);
 
-    // Step 6: Export results using geometry module
+    // Step 6: Export results using util module
     println!("\n💾 Step 6: Exporting Results");
     println!("============================");
 
-    // Use geometry module to export the analysis
+    // Use util module to export the analysis
     let report_filename = format!(
         "camera_conversion_results_{}.txt",
         input_model_type.to_lowercase()
@@ -1007,15 +1007,15 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
     println!("📄 Results exported to: {}", report_filename);
 }
 
-impl From<std::io::Error> for GeometryError {
+impl From<std::io::Error> for UtilError {
     fn from(err: std::io::Error) -> Self {
-        GeometryError::NumericalError(err.to_string())
+        UtilError::NumericalError(err.to_string())
     }
 }
 
-impl From<CameraModelError> for GeometryError {
+impl From<CameraModelError> for UtilError {
     fn from(err: CameraModelError) -> Self {
-        GeometryError::NumericalError(err.to_string())
+        UtilError::NumericalError(err.to_string())
     }
 }
 

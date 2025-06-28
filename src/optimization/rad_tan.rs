@@ -388,7 +388,7 @@ mod tests {
         model: &RadTanModel,
         num_points: usize,
     ) -> (Matrix2xX<f64>, Matrix3xX<f64>) {
-        crate::geometry::sample_points(Some(model), num_points).unwrap()
+        crate::util::sample_points(Some(model), num_points).unwrap()
     }
 
     #[test]

@@ -6,8 +6,8 @@
 //! camera model with the optimization framework.
 
 use crate::camera::{CameraModel, CameraModelError, DoubleSphereModel};
-use crate::geometry::compute_reprojection_error;
 use crate::optimization::Optimizer;
+use crate::util::compute_reprojection_error;
 
 use log::info;
 use nalgebra::{DVector, Matrix2xX, Matrix3xX, Vector2, Vector3};
@@ -375,7 +375,7 @@ mod tests {
         model: &DSCameraModel,
         num_points: usize,
     ) -> (Matrix2xX<f64>, Matrix3xX<f64>) {
-        crate::geometry::sample_points(Some(model), num_points).unwrap()
+        crate::util::sample_points(Some(model), num_points).unwrap()
     }
 
     #[test]

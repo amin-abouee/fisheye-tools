@@ -458,7 +458,7 @@ mod tests {
         }
     }
 
-    // Placeholder for geometry::sample_points or a simplified version
+    // Placeholder for util::sample_points or a simplified version
     fn sample_points_for_kb_model(
         model: &KBCameraModel,
         num_points: usize,

@@ -13,8 +13,8 @@
 //! the tiny-solver optimization framework.
 
 pub mod camera;
-pub mod geometry;
 pub mod optimization;
+pub mod util;
 
 // Re-export commonly used types
 pub use camera::{

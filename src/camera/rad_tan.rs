@@ -134,7 +134,7 @@ impl fmt::Debug for RadTanModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "RadTanModel [fx: {} fy: {} cx: {} cy: {} distortions: {:?}]",
+            "RadTan [fx: {} fy: {} cx: {} cy: {} distortions: {:?}]",
             self.intrinsics.fx,
             self.intrinsics.fy,
             self.intrinsics.cx,

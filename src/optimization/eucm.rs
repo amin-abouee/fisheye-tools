@@ -385,8 +385,7 @@ mod tests {
         model: &EucmModel,
         num_points: usize,
     ) -> (Matrix3xX<f64>, Matrix2xX<f64>) {
-        let (points_2d, points_3d) =
-            crate::geometry::sample_points(Some(model), num_points).unwrap();
+        let (points_2d, points_3d) = crate::util::sample_points(Some(model), num_points).unwrap();
         (points_3d, points_2d)
     }
 

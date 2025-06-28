@@ -29,14 +29,14 @@ use fisheye_tools::camera::{
     CameraModel, CameraModelEnum, DoubleSphereModel, EucmModel, KannalaBrandtModel, PinholeModel,
     RadTanModel, UcmModel,
 };
-use fisheye_tools::geometry::{self, ConversionMetrics, ValidationResults};
 use fisheye_tools::optimization::{
     DoubleSphereOptimizationCost, EucmOptimizationCost, KannalaBrandtOptimizationCost, Optimizer,
     RadTanOptimizationCost, UcmOptimizationCost,
 };
+use fisheye_tools::util::{self, ConversionMetrics, ValidationResults};
 use log::info;
 
-// Structs now imported from geometry module
+// Structs now imported from util module
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -57,7 +57,7 @@ struct Cli {
     num_points: usize,
 }
 
-// Structs moved to geometry module
+// Structs moved to util module
 
 /// Load input camera model from file based on type
 fn load_input_model(
@@ -103,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Display tool header
-    // geometry::display_tool_header(&cli.input_model, &cli.input_path, cli.num_points);
+    // util::display_tool_header(&cli.input_model, &cli.input_path, cli.num_points);
 
     println!("🎯 COMPREHENSIVE CAMERA MODEL CONVERSION TOOL");
     println!("==============================================");
@@ -125,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_model = load_input_model(&cli.input_model, input_path_str)?;
 
     // Display input model parameters
-    geometry::display_input_model_parameters(&cli.input_model, &*input_model);
+    util::display_input_model_parameters(&cli.input_model, &*input_model);
 
     info!(
         "✅ Successfully loaded {} model from YAML",
@@ -133,10 +133,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Step 2: Generate sample points
-    let (points_2d, points_3d) = geometry::sample_points(Some(&*input_model), cli.num_points)?;
+    let (points_2d, points_3d) = util::sample_points(Some(&*input_model), cli.num_points)?;
 
     // Display sample points information
-    // geometry::display_sample_points_info(cli.num_points, points_3d.ncols(), points_2d.ncols());
+    // util::display_sample_points_info(cli.num_points, points_3d.ncols(), points_2d.ncols());
 
     println!("\n🎲 Generating Sample Points:");
     println!("Requested points: {}", cli.num_points);
@@ -149,8 +149,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.num_points
     );
 
-    // Export point correspondences using geometry module
-    geometry::export_point_correspondences(&points_3d, &points_2d, "point_correspondences")?;
+    // Export point correspondences using util module
+    util::export_point_correspondences(&points_3d, &points_2d, "point_correspondences")?;
 
     info!(
         "✅ Generated {} 3D-2D point correspondences",
@@ -168,9 +168,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "ds" | "double_sphere"
     ) {
         println!(
-            "\n📐 Converting {} → {}",
+            "\n📐 Converting {} → Double Sphere",
             cli.input_model.to_uppercase(),
-            "Double Sphere"
         );
         println!("{}", "-".repeat(32 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_double_sphere(&*input_model, &points_3d, &points_2d) {
@@ -184,9 +183,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "kb" | "kannala_brandt"
     ) {
         println!(
-            "\n📐 Converting {} → {}",
+            "\n📐 Converting {} → Kannala-Brandt",
             cli.input_model.to_uppercase(),
-            "Kannala-Brandt"
         );
         println!("{}", "-".repeat(32 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_kannala_brandt(&*input_model, &points_3d, &points_2d) {
@@ -200,9 +198,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "radtan" | "rad_tan"
     ) {
         println!(
-            "\n📐 Converting {} → {}",
+            "\n📐 Converting {} → Radial-Tangential",
             cli.input_model.to_uppercase(),
-            "Radial-Tangential"
         );
         println!("{}", "-".repeat(37 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_rad_tan(&*input_model, &points_3d, &points_2d) {
@@ -213,9 +210,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Convert to UCM (if not the input model)
     if !matches!(cli.input_model.to_lowercase().as_str(), "ucm" | "unified") {
         println!(
-            "\n📐 Converting {} → {}",
+            "\n📐 Converting {} → Unified Camera Model",
             cli.input_model.to_uppercase(),
-            "Unified Camera Model"
         );
         println!("{}", "-".repeat(40 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_ucm(&*input_model, &points_3d, &points_2d) {
@@ -229,9 +225,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "eucm" | "extended_unified"
     ) {
         println!(
-            "\n📐 Converting {} → {}",
+            "\n📐 Converting {} → Extended Unified Camera Model",
             cli.input_model.to_uppercase(),
-            "Extended Unified Camera Model"
         );
         println!("{}", "-".repeat(49 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_eucm(&*input_model, &points_3d, &points_2d) {
@@ -239,8 +234,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Display results summary using geometry module
-    geometry::display_results_summary(&all_metrics, &cli.input_model);
+    // Display results summary using util module
+    util::display_results_summary(&all_metrics, &cli.input_model);
 
     if all_metrics.is_empty() {
         return Ok(());
@@ -249,7 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// geometry::display_detailed_results function moved to geometry module as display_detailed_results
+// util::display_detailed_results function moved to util module as display_detailed_results
 
 // Conversion function implementations
 fn convert_to_double_sphere(
@@ -269,7 +264,7 @@ fn convert_to_double_sphere(
 
     // Compute initial reprojection error
     let initial_error =
-        geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
 
     let mut optimizer =
         DoubleSphereOptimizationCost::new(initial_model, points_3d.clone(), points_2d.clone());
@@ -295,14 +290,14 @@ fn convert_to_double_sphere(
     };
 
     let reprojection_result =
-        geometry::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
 
     let convergence_status = match optimization_result {
         Ok(()) => "Success".to_string(),
         Err(_) => "Linear Only".to_string(),
     };
 
-    let validation_results = geometry::validate_conversion_accuracy(&final_model, input_model)
+    let validation_results = util::validate_conversion_accuracy(&final_model, input_model)
         .unwrap_or_else(|_| ValidationResults {
             center_error: f64::NAN,
             near_center_error: f64::NAN,
@@ -325,7 +320,7 @@ fn convert_to_double_sphere(
         validation_results,
     };
 
-    geometry::display_detailed_results(&metrics);
+    util::display_detailed_results(&metrics);
     Ok(metrics)
 }
 
@@ -346,7 +341,7 @@ fn convert_to_kannala_brandt(
 
     // Compute initial reprojection error
     let initial_error =
-        geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
 
     // Create optimizer and perform linear estimation
     let mut optimizer =
@@ -377,10 +372,10 @@ fn convert_to_kannala_brandt(
     };
 
     let reprojection_result =
-        geometry::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
 
     // Validation testing using C++ reference test points
-    let validation_results = geometry::validate_conversion_accuracy(&final_model, input_model)
+    let validation_results = util::validate_conversion_accuracy(&final_model, input_model)
         .unwrap_or_else(|_| ValidationResults {
             center_error: f64::NAN,
             near_center_error: f64::NAN,
@@ -408,7 +403,7 @@ fn convert_to_kannala_brandt(
         validation_results,
     };
 
-    geometry::display_detailed_results(&metrics);
+    util::display_detailed_results(&metrics);
     Ok(metrics)
 }
 
@@ -428,7 +423,7 @@ fn convert_to_rad_tan(
 
     // Compute initial reprojection error
     let initial_error =
-        geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
 
     let mut optimizer =
         RadTanOptimizationCost::new(initial_model, points_3d.clone(), points_2d.clone());
@@ -459,14 +454,14 @@ fn convert_to_rad_tan(
     };
 
     let reprojection_result =
-        geometry::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
 
     let convergence_status = match optimization_result {
         Ok(()) => "Success".to_string(),
         Err(_) => "Linear Only".to_string(),
     };
 
-    let validation_results = geometry::validate_conversion_accuracy(&final_model, input_model)
+    let validation_results = util::validate_conversion_accuracy(&final_model, input_model)
         .unwrap_or_else(|_| ValidationResults {
             center_error: f64::NAN,
             near_center_error: f64::NAN,
@@ -489,7 +484,7 @@ fn convert_to_rad_tan(
         validation_results,
     };
 
-    geometry::display_detailed_results(&metrics);
+    util::display_detailed_results(&metrics);
     Ok(metrics)
 }
 
@@ -509,7 +504,7 @@ fn convert_to_ucm(
 
     // Compute initial reprojection error
     let initial_error =
-        geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
 
     let mut optimizer =
         UcmOptimizationCost::new(initial_model, points_3d.clone(), points_2d.clone());
@@ -534,14 +529,14 @@ fn convert_to_ucm(
     };
 
     let reprojection_result =
-        geometry::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
 
     let convergence_status = match optimization_result {
         Ok(()) => "Success".to_string(),
         Err(_) => "Linear Only".to_string(),
     };
 
-    let validation_results = geometry::validate_conversion_accuracy(&final_model, input_model)
+    let validation_results = util::validate_conversion_accuracy(&final_model, input_model)
         .unwrap_or_else(|_| ValidationResults {
             center_error: f64::NAN,
             near_center_error: f64::NAN,
@@ -564,7 +559,7 @@ fn convert_to_ucm(
         validation_results,
     };
 
-    geometry::display_detailed_results(&metrics);
+    util::display_detailed_results(&metrics);
     Ok(metrics)
 }
 
@@ -585,7 +580,7 @@ fn convert_to_eucm(
 
     // Compute initial reprojection error
     let initial_error =
-        geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
 
     let mut optimizer =
         EucmOptimizationCost::new(initial_model, points_3d.clone(), points_2d.clone());
@@ -611,14 +606,14 @@ fn convert_to_eucm(
     };
 
     let reprojection_result =
-        geometry::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
+        util::compute_reprojection_error(Some(&final_model), points_3d, points_2d)?;
 
     let convergence_status = match optimization_result {
         Ok(()) => "Success".to_string(),
         Err(_) => "Linear Only".to_string(),
     };
 
-    let validation_results = geometry::validate_conversion_accuracy(&final_model, input_model)
+    let validation_results = util::validate_conversion_accuracy(&final_model, input_model)
         .unwrap_or_else(|_| ValidationResults {
             center_error: f64::NAN,
             near_center_error: f64::NAN,
@@ -641,7 +636,7 @@ fn convert_to_eucm(
         validation_results,
     };
 
-    geometry::display_detailed_results(&metrics);
+    util::display_detailed_results(&metrics);
     Ok(metrics)
 }
 
