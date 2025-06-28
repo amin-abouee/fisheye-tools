@@ -66,31 +66,31 @@ fn load_input_model(
 ) -> Result<Box<dyn CameraModel>, Box<dyn std::error::Error>> {
     let model: Box<dyn CameraModel> = match model_type.to_lowercase().as_str() {
         "kb" | "kannala_brandt" => {
-            info!("Loading Kannala-Brandt model from: {}", path);
+            info!("Loading Kannala-Brandt model from: {path}");
             Box::new(KannalaBrandtModel::load_from_yaml(path)?)
         }
         "ds" | "double_sphere" => {
-            info!("Loading Double Sphere model from: {}", path);
+            info!("Loading Double Sphere model from: {path}");
             Box::new(DoubleSphereModel::load_from_yaml(path)?)
         }
         "radtan" | "rad_tan" => {
-            info!("Loading Radial-Tangential model from: {}", path);
+            info!("Loading Radial-Tangential model from: {path}");
             Box::new(RadTanModel::load_from_yaml(path)?)
         }
         "ucm" | "unified" => {
-            info!("Loading Unified Camera Model from: {}", path);
+            info!("Loading Unified Camera Model from: {path}");
             Box::new(UcmModel::load_from_yaml(path)?)
         }
         "eucm" | "extended_unified" => {
-            info!("Loading Extended Unified Camera Model from: {}", path);
+            info!("Loading Extended Unified Camera Model from: {path}");
             Box::new(EucmModel::load_from_yaml(path)?)
         }
         "pinhole" => {
-            info!("Loading Pinhole model from: {}", path);
+            info!("Loading Pinhole model from: {path}");
             Box::new(PinholeModel::load_from_yaml(path)?)
         }
         _ => {
-            return Err(format!("Unsupported input model type: {}. Supported types: kb, ds, radtan, ucm, eucm, pinhole", model_type).into());
+            return Err(format!("Unsupported input model type: {model_type}. Supported types: kb, ds, radtan, ucm, eucm, pinhole").into());
         }
     };
     Ok(model)

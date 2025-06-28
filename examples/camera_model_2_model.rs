@@ -63,7 +63,7 @@ fn create_input_model(
             Box::new(KannalaBrandtModel::load_from_yaml(input_path)?)
         }
         _ => {
-            error!("Unsupported input model type: {}", input_model_type);
+            error!("Unsupported input model type: {input_model_type}");
             return Err("Unsupported input model type".into());
         }
     };
@@ -113,7 +113,7 @@ fn create_output_model(
             Box::new(cost_model)
         }
         _ => {
-            error!("Unsupported output model type: {}", output_model_type);
+            error!("Unsupported output model type: {output_model_type}");
             return Err("Unsupported output model type".into());
         }
     };
@@ -168,11 +168,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("points_3d: {:?}", points_3d.ncols());
 
     let input_model_intrinsics = input_model.get_intrinsics();
-    info!("input_model_intrinsics: {:?}", input_model_intrinsics);
+    info!("input_model_intrinsics: {input_model_intrinsics:?}");
     let input_model_resolution = input_model.get_resolution();
-    info!("input_model_resolution: {:?}", input_model_resolution);
+    info!("input_model_resolution: {input_model_resolution:?}");
     let input_model_distortion = input_model.get_distortion();
-    info!("input_model_distortion: {:?}", input_model_distortion);
+    info!("input_model_distortion: {input_model_distortion:?}");
 
     let output_model_type = cli.output_model.as_str();
     let mut output_model = create_output_model(
@@ -189,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Optimization completed successfully!");
         }
         Err(e) => {
-            error!("Optimization failed: {:?}", e);
+            error!("Optimization failed: {e:?}");
             info!("Continuing with linear estimation results...");
         }
     }
@@ -201,11 +201,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Also print to stdout for debugging
     println!("\n=== CONVERSION RESULTS ===");
-    println!("Input Model ({}): ", input_model_type);
-    println!("  Intrinsics: {:?}", input_model_intrinsics);
-    println!("  Resolution: {:?}", input_model_resolution);
-    println!("  Distortion: {:?}", input_model_distortion);
-    println!("\nOutput Model ({}):", output_model_type);
+    println!("Input Model ({input_model_type}): ");
+    println!("  Intrinsics: {input_model_intrinsics:?}");
+    println!("  Resolution: {input_model_resolution:?}");
+    println!("  Distortion: {input_model_distortion:?}");
+    println!("\nOutput Model ({output_model_type}):");
     println!("  Intrinsics: {:?}", output_model.get_intrinsics());
     println!("  Resolution: {:?}", output_model.get_resolution());
     println!("  Distortion: {:?}", output_model.get_distortion());
