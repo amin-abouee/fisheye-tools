@@ -38,6 +38,10 @@ yaml-rust = "0.4"
 # Logging
 log = "0.4"
 
+# Image processing
+image = "0.25.2"
+csv = "1.3.1"
+
 [dev-dependencies]
 # Testing dependencies
 approx = "0.5.1"
