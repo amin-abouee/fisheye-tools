@@ -153,7 +153,7 @@ impl fmt::Debug for KannalaBrandtModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "DoubleSphere [fx: {} fy: {} cx: {} cy: {} distortions: {:?}]",
+            "KannalaBrandt [fx: {} fy: {} cx: {} cy: {} distortions: {:?}]",
             self.intrinsics.fx,
             self.intrinsics.fy,
             self.intrinsics.cx,

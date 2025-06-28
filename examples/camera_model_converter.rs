@@ -26,10 +26,10 @@
 
 use clap::Parser;
 use fisheye_tools::camera::{
-    CameraModel, DoubleSphereModel, EucmModel, KannalaBrandtModel, PinholeModel, RadTanModel,
-    UcmModel,
+    CameraModel, CameraModelEnum, DoubleSphereModel, EucmModel, KannalaBrandtModel, PinholeModel,
+    RadTanModel, UcmModel,
 };
-use fisheye_tools::geometry::{self, ConversionMetrics, ParameterChanges, ValidationResults};
+use fisheye_tools::geometry::{self, ConversionMetrics, ValidationResults};
 use fisheye_tools::optimization::{
     DoubleSphereOptimizationCost, EucmOptimizationCost, KannalaBrandtOptimizationCost, Optimizer,
     RadTanOptimizationCost, UcmOptimizationCost,
@@ -167,7 +167,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.input_model.to_lowercase().as_str(),
         "ds" | "double_sphere"
     ) {
-        geometry::display_conversion_progress(&cli.input_model, "Double Sphere");
+        println!(
+            "\n📐 Converting {} → {}",
+            cli.input_model.to_uppercase(),
+            "Double Sphere"
+        );
+        println!("{}", "-".repeat(32 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_double_sphere(&*input_model, &points_3d, &points_2d) {
             all_metrics.push(metrics);
         }
@@ -178,7 +183,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.input_model.to_lowercase().as_str(),
         "kb" | "kannala_brandt"
     ) {
-        geometry::display_conversion_progress(&cli.input_model, "Kannala-Brandt");
+        println!(
+            "\n📐 Converting {} → {}",
+            cli.input_model.to_uppercase(),
+            "Kannala-Brandt"
+        );
+        println!("{}", "-".repeat(32 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_kannala_brandt(&*input_model, &points_3d, &points_2d) {
             all_metrics.push(metrics);
         }
@@ -189,7 +199,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.input_model.to_lowercase().as_str(),
         "radtan" | "rad_tan"
     ) {
-        geometry::display_conversion_progress(&cli.input_model, "Radial-Tangential");
+        println!(
+            "\n📐 Converting {} → {}",
+            cli.input_model.to_uppercase(),
+            "Radial-Tangential"
+        );
+        println!("{}", "-".repeat(37 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_rad_tan(&*input_model, &points_3d, &points_2d) {
             all_metrics.push(metrics);
         }
@@ -197,7 +212,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Convert to UCM (if not the input model)
     if !matches!(cli.input_model.to_lowercase().as_str(), "ucm" | "unified") {
-        geometry::display_conversion_progress(&cli.input_model, "Unified Camera Model");
+        println!(
+            "\n📐 Converting {} → {}",
+            cli.input_model.to_uppercase(),
+            "Unified Camera Model"
+        );
+        println!("{}", "-".repeat(40 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_ucm(&*input_model, &points_3d, &points_2d) {
             all_metrics.push(metrics);
         }
@@ -208,7 +228,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.input_model.to_lowercase().as_str(),
         "eucm" | "extended_unified"
     ) {
-        geometry::display_conversion_progress(&cli.input_model, "Extended Unified Camera Model");
+        println!(
+            "\n📐 Converting {} → {}",
+            cli.input_model.to_uppercase(),
+            "Extended Unified Camera Model"
+        );
+        println!("{}", "-".repeat(49 + cli.input_model.len()));
         if let Ok(metrics) = convert_to_eucm(&*input_model, &points_3d, &points_2d) {
             all_metrics.push(metrics);
         }
@@ -242,10 +267,6 @@ fn convert_to_double_sphere(
         xi: 0.1,
     };
 
-    // Store initial parameters for comparison
-    let initial_intrinsics = initial_model.intrinsics.clone();
-    let initial_distortion = [initial_model.alpha, initial_model.xi];
-
     // Compute initial reprojection error
     let initial_error =
         geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
@@ -264,18 +285,6 @@ fn convert_to_double_sphere(
     // Get final parameters
     let final_intrinsics = optimizer.get_intrinsics();
     let final_distortion = optimizer.get_distortion();
-
-    // Calculate parameter changes
-    let fx_change = (final_intrinsics.fx - initial_intrinsics.fx).abs();
-    let fy_change = (final_intrinsics.fy - initial_intrinsics.fy).abs();
-    let cx_change = (final_intrinsics.cx - initial_intrinsics.cx).abs();
-    let cy_change = (final_intrinsics.cy - initial_intrinsics.cy).abs();
-    let distortion_changes = vec![
-        (final_distortion[0] - initial_distortion[0]).abs(),
-        (final_distortion[1] - initial_distortion[1]).abs(),
-    ];
-    let total_parameter_change =
-        fx_change + fy_change + cx_change + cy_change + distortion_changes.iter().sum::<f64>();
 
     // Compute reprojection error
     let final_model = DoubleSphereModel {
@@ -307,24 +316,12 @@ fn convert_to_double_sphere(
         });
 
     let metrics = ConversionMetrics {
+        model: CameraModelEnum::DoubleSphere(final_model),
         model_name: "Double Sphere".to_string(),
         final_reprojection_error: reprojection_result,
         initial_reprojection_error: initial_error,
         optimization_time_ms: optimization_time,
         convergence_status,
-        fx: final_intrinsics.fx,
-        fy: final_intrinsics.fy,
-        cx: final_intrinsics.cx,
-        cy: final_intrinsics.cy,
-        distortion_params: final_distortion.clone(),
-        parameter_changes: ParameterChanges {
-            fx_change,
-            fy_change,
-            cx_change,
-            cy_change,
-            distortion_changes,
-            total_parameter_change,
-        },
         validation_results,
     };
 
@@ -347,10 +344,6 @@ fn convert_to_kannala_brandt(
         distortions: [0.0; 4], // k1, k2, k3, k4
     };
 
-    // Store initial parameters for comparison
-    let initial_intrinsics = initial_model.intrinsics.clone();
-    let initial_distortion = initial_model.distortions.to_vec();
-
     // Compute initial reprojection error
     let initial_error =
         geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
@@ -370,30 +363,6 @@ fn convert_to_kannala_brandt(
     // Get final parameters
     let final_intrinsics = optimizer.get_intrinsics();
     let final_distortion = optimizer.get_distortion();
-
-    // Calculate parameter changes
-    let fx_change = (final_intrinsics.fx - initial_intrinsics.fx).abs();
-    let fy_change = (final_intrinsics.fy - initial_intrinsics.fy).abs();
-    let cx_change = (final_intrinsics.cx - initial_intrinsics.cx).abs();
-    let cy_change = (final_intrinsics.cy - initial_intrinsics.cy).abs();
-
-    let distortion_changes: Vec<f64> = final_distortion
-        .iter()
-        .zip(initial_distortion.iter())
-        .map(|(final_val, initial_val)| (final_val - initial_val).abs())
-        .collect();
-
-    let total_parameter_change =
-        fx_change + fy_change + cx_change + cy_change + distortion_changes.iter().sum::<f64>();
-
-    let parameter_changes = ParameterChanges {
-        fx_change,
-        fy_change,
-        cx_change,
-        cy_change,
-        distortion_changes: distortion_changes.clone(),
-        total_parameter_change,
-    };
 
     // Compute reprojection error
     let final_model = KannalaBrandtModel {
@@ -430,17 +399,12 @@ fn convert_to_kannala_brandt(
     };
 
     let metrics = ConversionMetrics {
+        model: CameraModelEnum::KannalaBrandt(final_model),
         model_name: "Kannala-Brandt".to_string(),
         final_reprojection_error: reprojection_result,
         initial_reprojection_error: initial_error,
         optimization_time_ms: optimization_time,
         convergence_status,
-        fx: final_intrinsics.fx,
-        fy: final_intrinsics.fy,
-        cx: final_intrinsics.cx,
-        cy: final_intrinsics.cy,
-        distortion_params: final_distortion.clone(),
-        parameter_changes,
         validation_results,
     };
 
@@ -462,10 +426,6 @@ fn convert_to_rad_tan(
         distortions: [0.0; 5], // k1, k2, p1, p2, k3
     };
 
-    // Store initial parameters for comparison
-    let initial_intrinsics = initial_model.intrinsics.clone();
-    let initial_distortion: Vec<f64> = initial_model.distortions.to_vec();
-
     // Compute initial reprojection error
     let initial_error =
         geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
@@ -484,19 +444,6 @@ fn convert_to_rad_tan(
     // Get final parameters
     let final_intrinsics = optimizer.get_intrinsics();
     let final_distortion = optimizer.get_distortion();
-
-    // Calculate parameter changes
-    let fx_change = (final_intrinsics.fx - initial_intrinsics.fx).abs();
-    let fy_change = (final_intrinsics.fy - initial_intrinsics.fy).abs();
-    let cx_change = (final_intrinsics.cx - initial_intrinsics.cx).abs();
-    let cy_change = (final_intrinsics.cy - initial_intrinsics.cy).abs();
-    let distortion_changes: Vec<f64> = final_distortion
-        .iter()
-        .zip(initial_distortion.iter())
-        .map(|(final_val, initial_val)| (final_val - initial_val).abs())
-        .collect();
-    let total_parameter_change =
-        fx_change + fy_change + cx_change + cy_change + distortion_changes.iter().sum::<f64>();
 
     // Compute reprojection error
     let final_model = RadTanModel {
@@ -533,24 +480,12 @@ fn convert_to_rad_tan(
         });
 
     let metrics = ConversionMetrics {
+        model: CameraModelEnum::RadTan(final_model),
         model_name: "Radial-Tangential".to_string(),
         final_reprojection_error: reprojection_result,
         initial_reprojection_error: initial_error,
         optimization_time_ms: optimization_time,
         convergence_status,
-        fx: final_intrinsics.fx,
-        fy: final_intrinsics.fy,
-        cx: final_intrinsics.cx,
-        cy: final_intrinsics.cy,
-        distortion_params: final_distortion.clone(),
-        parameter_changes: ParameterChanges {
-            fx_change,
-            fy_change,
-            cx_change,
-            cy_change,
-            distortion_changes,
-            total_parameter_change,
-        },
         validation_results,
     };
 
@@ -572,10 +507,6 @@ fn convert_to_ucm(
         alpha: 0.5, // Initial guess
     };
 
-    // Store initial parameters for comparison
-    let initial_intrinsics = initial_model.intrinsics.clone();
-    let initial_distortion = [initial_model.alpha];
-
     // Compute initial reprojection error
     let initial_error =
         geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
@@ -594,15 +525,6 @@ fn convert_to_ucm(
     // Get final parameters
     let final_intrinsics = optimizer.get_intrinsics();
     let final_distortion = optimizer.get_distortion();
-
-    // Calculate parameter changes
-    let fx_change = (final_intrinsics.fx - initial_intrinsics.fx).abs();
-    let fy_change = (final_intrinsics.fy - initial_intrinsics.fy).abs();
-    let cx_change = (final_intrinsics.cx - initial_intrinsics.cx).abs();
-    let cy_change = (final_intrinsics.cy - initial_intrinsics.cy).abs();
-    let distortion_changes = vec![(final_distortion[0] - initial_distortion[0]).abs()];
-    let total_parameter_change =
-        fx_change + fy_change + cx_change + cy_change + distortion_changes.iter().sum::<f64>();
 
     // Compute reprojection error
     let final_model = UcmModel {
@@ -633,24 +555,12 @@ fn convert_to_ucm(
         });
 
     let metrics = ConversionMetrics {
+        model: CameraModelEnum::Ucm(final_model),
         model_name: "Unified Camera Model".to_string(),
         final_reprojection_error: reprojection_result,
         initial_reprojection_error: initial_error,
         optimization_time_ms: optimization_time,
         convergence_status,
-        fx: final_intrinsics.fx,
-        fy: final_intrinsics.fy,
-        cx: final_intrinsics.cx,
-        cy: final_intrinsics.cy,
-        distortion_params: final_distortion.clone(),
-        parameter_changes: ParameterChanges {
-            fx_change,
-            fy_change,
-            cx_change,
-            cy_change,
-            distortion_changes,
-            total_parameter_change,
-        },
         validation_results,
     };
 
@@ -673,10 +583,6 @@ fn convert_to_eucm(
         beta: 1.0,  // Initial guess
     };
 
-    // Store initial parameters for comparison
-    let initial_intrinsics = initial_model.intrinsics.clone();
-    let initial_distortion = [initial_model.alpha, initial_model.beta];
-
     // Compute initial reprojection error
     let initial_error =
         geometry::compute_reprojection_error(Some(&initial_model), points_3d, points_2d)?;
@@ -695,18 +601,6 @@ fn convert_to_eucm(
     // Get final parameters
     let final_intrinsics = optimizer.get_intrinsics();
     let final_distortion = optimizer.get_distortion();
-
-    // Calculate parameter changes
-    let fx_change = (final_intrinsics.fx - initial_intrinsics.fx).abs();
-    let fy_change = (final_intrinsics.fy - initial_intrinsics.fy).abs();
-    let cx_change = (final_intrinsics.cx - initial_intrinsics.cx).abs();
-    let cy_change = (final_intrinsics.cy - initial_intrinsics.cy).abs();
-    let distortion_changes = vec![
-        (final_distortion[0] - initial_distortion[0]).abs(),
-        (final_distortion[1] - initial_distortion[1]).abs(),
-    ];
-    let total_parameter_change =
-        fx_change + fy_change + cx_change + cy_change + distortion_changes.iter().sum::<f64>();
 
     // Compute reprojection error
     let final_model = EucmModel {
@@ -738,24 +632,12 @@ fn convert_to_eucm(
         });
 
     let metrics = ConversionMetrics {
+        model: CameraModelEnum::Eucm(final_model),
         model_name: "Extended Unified Camera Model".to_string(),
         final_reprojection_error: reprojection_result,
         initial_reprojection_error: initial_error,
         optimization_time_ms: optimization_time,
         convergence_status,
-        fx: final_intrinsics.fx,
-        fy: final_intrinsics.fy,
-        cx: final_intrinsics.cx,
-        cy: final_intrinsics.cy,
-        distortion_params: final_distortion.clone(),
-        parameter_changes: ParameterChanges {
-            fx_change,
-            fy_change,
-            cx_change,
-            cy_change,
-            distortion_changes,
-            total_parameter_change,
-        },
         validation_results,
     };
 

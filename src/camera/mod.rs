@@ -32,6 +32,16 @@ pub use pinhole::PinholeModel;
 pub use rad_tan::RadTanModel;
 pub use ucm::UcmModel;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CameraModelEnum {
+    DoubleSphere(DoubleSphereModel),
+    Eucm(EucmModel),
+    KannalaBrandt(KannalaBrandtModel),
+    Pinhole(PinholeModel),
+    RadTan(RadTanModel),
+    Ucm(UcmModel),
+}
+
 /// Represents the intrinsic parameters of a camera.
 ///
 /// These parameters define the internal geometry of the camera,

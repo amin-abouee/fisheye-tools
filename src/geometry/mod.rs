@@ -1,4 +1,4 @@
-use crate::camera::{CameraModel, CameraModelError};
+use crate::camera::{CameraModel, CameraModelEnum, CameraModelError};
 use image::{GrayImage, Rgb, RgbImage};
 use nalgebra::{Matrix2xX, Matrix3xX, Vector2};
 use serde::{Deserialize, Serialize};
@@ -43,29 +43,13 @@ impl fmt::Debug for ProjectionError {
 /// Parameter estimation metrics with detailed model parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionMetrics {
+    pub model: CameraModelEnum,
     pub model_name: String,
     pub final_reprojection_error: ProjectionError,
     pub initial_reprojection_error: ProjectionError,
     pub optimization_time_ms: f64,
     pub convergence_status: String,
-    pub fx: f64,
-    pub fy: f64,
-    pub cx: f64,
-    pub cy: f64,
-    pub distortion_params: Vec<f64>,
-    pub parameter_changes: ParameterChanges,
     pub validation_results: ValidationResults,
-}
-
-/// Parameter changes during optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParameterChanges {
-    pub fx_change: f64,
-    pub fy_change: f64,
-    pub cx_change: f64,
-    pub cy_change: f64,
-    pub distortion_changes: Vec<f64>,
-    pub total_parameter_change: f64,
 }
 
 /// Validation results for conversion accuracy testing
@@ -241,126 +225,6 @@ where
         stddev,
         median,
     })
-}
-
-// /// Comprehensive evaluation function that assesses model conversion quality
-// ///
-// /// # Arguments
-// ///
-// /// * `input_model` - The source camera model
-// /// * `output_model` - The target camera model after conversion
-// /// * `points_3d` - 3D points for evaluation
-// /// * `points_2d` - Corresponding 2D points
-// /// * `image_path` - Optional path to reference image for visual quality assessment
-// ///
-// /// # Returns
-// ///
-// /// * `Result<String, GeometryError>` - Evaluation report or error
-// pub fn evaluate<T1, T2>(
-//     input_model: &T1,
-//     output_model: &T2,
-//     points_3d: &Matrix3xX<f64>,
-//     points_2d: &Matrix2xX<f64>,
-//     image_path: Option<&str>,
-// ) -> Result<String, GeometryError>
-// where
-//     T1: CameraModel,
-//     T2: CameraModel,
-// {
-//     println!("\n🧪 EVALUATION AND VALIDATION:");
-//     println!("=============================");
-
-//     // Evaluate reprojection error
-//     let reprojection_error = evaluate_reprojection_error(output_model, points_3d, points_2d)?;
-//     println!("Reprojection Error: {:?}", reprojection_error);
-
-//     // Validate conversion accuracy
-//     let validation_results = validate_conversion_accuracy(input_model, output_model)?;
-//     println!("\n🎯 Conversion Accuracy Validation:");
-//     println!(
-//         "  📈 Average Error: {:.4} px, Max Error: {:.4} px",
-//         validation_results.average_error, validation_results.max_error
-//     );
-//     println!("  ✅ Conversion Accuracy: {}", validation_results.status);
-
-//     // Image quality assessment if image is provided
-//     let mut image_quality_report = String::new();
-//     if let Some(img_path) = image_path {
-//         match assess_image_quality(input_model, output_model, img_path) {
-//             Ok(report) => {
-//                 image_quality_report = report;
-//                 println!("{}", image_quality_report);
-//             }
-//             Err(e) => {
-//                 println!("Image quality assessment failed: {}", e);
-//             }
-//         }
-//     }
-
-//     // Generate comprehensive analysis report
-//     let analysis_report = generate_analysis_report(
-//         input_model,
-//         output_model,
-//         &reprojection_error,
-//         points_3d,
-//         points_2d,
-//     )?;
-
-//     let validation_summary = format!(
-//         "Conversion Accuracy: {} (Avg: {:.4} px, Max: {:.4} px)",
-//         validation_results.status, validation_results.average_error, validation_results.max_error
-//     );
-
-//     Ok(format!(
-//         "{}\n{}\n{}",
-//         validation_summary, image_quality_report, analysis_report
-//     ))
-// }
-
-/// Evaluates reprojection error for a given camera model and point correspondences
-///
-/// # Arguments
-///
-/// * `camera_model` - The camera model to evaluate
-/// * `points_3d` - 3D points matrix
-/// * `points_2d` - Corresponding 2D points matrix
-///
-/// # Returns
-///
-/// * `Result<f64, GeometryError>` - Average reprojection error in pixels
-pub fn evaluate_reprojection_error<T>(
-    camera_model: &T,
-    points_3d: &Matrix3xX<f64>,
-    points_2d: &Matrix2xX<f64>,
-) -> Result<f64, GeometryError>
-where
-    T: CameraModel,
-{
-    let mut total_error = 0.0;
-    let mut valid_points = 0;
-
-    for i in 0..points_3d.ncols() {
-        let point_3d = points_3d.column(i).into_owned();
-        let point_2d = points_2d.column(i).into_owned();
-
-        if let Ok(projected_point) = camera_model.project(&point_3d) {
-            let error = (point_2d - projected_point).norm();
-            total_error += error;
-            valid_points += 1;
-        }
-    }
-
-    if valid_points == 0 {
-        return Err(GeometryError::ZeroProjectionPoints);
-    }
-
-    let average_error = total_error / valid_points as f64;
-    println!(
-        "Reprojection error from camera model: {} pixels (over {} points)",
-        average_error, valid_points
-    );
-
-    Ok(average_error)
 }
 
 /// Calculate Peak Signal-to-Noise Ratio (PSNR) between two images
@@ -716,9 +580,9 @@ where
     let test_regions = [
         ("Center", Vector2::new(width * 0.5, height * 0.5)),
         ("Near Center", Vector2::new(width * 0.55, height * 0.55)),
-        ("Mid Region", Vector2::new(width * 0.65, height * 0.6)),
-        ("Edge Region", Vector2::new(width * 0.75, height * 0.7)),
-        ("Far Edge", Vector2::new(width * 0.85, height * 0.8)),
+        ("Mid Region", Vector2::new(width * 0.65, height * 0.65)),
+        ("Edge Region", Vector2::new(width * 0.8, height * 0.8)),
+        ("Far Edge", Vector2::new(width * 0.95, height * 0.95)),
     ];
 
     let mut total_error = 0.0;
@@ -801,7 +665,7 @@ where
 
     let status = if average_error.is_nan() {
         "NEEDS IMPROVEMENT".to_string()
-    } else if average_error < 0.01 {
+    } else if average_error < 0.001 {
         "EXCELLENT".to_string()
     } else if average_error < 0.1 {
         "GOOD".to_string()
@@ -897,120 +761,6 @@ where
     Ok(report)
 }
 
-/// Generate a comprehensive analysis report
-///
-/// # Arguments
-///
-/// * `input_model` - Source camera model
-/// * `output_model` - Target camera model
-/// * `reprojection_error` - Reprojection error value
-/// * `points_3d` - 3D points used in analysis
-/// * `points_2d` - 2D points used in analysis
-///
-/// # Returns
-///
-/// * `Result<String, GeometryError>` - Generated analysis report
-pub fn generate_analysis_report<T1, T2>(
-    input_model: &T1,
-    output_model: &T2,
-    reprojection_error: &f64,
-    points_3d: &Matrix3xX<f64>,
-    points_2d: &Matrix2xX<f64>,
-) -> Result<String, GeometryError>
-where
-    T1: CameraModel,
-    T2: CameraModel,
-{
-    println!("\n📊 Generating Detailed Analysis Report...");
-
-    let filename = "rust_conversion_analysis.txt";
-    let mut file = File::create(filename).map_err(|e| {
-        GeometryError::NumericalError(format!("Failed to create report file: {}", e))
-    })?;
-
-    writeln!(
-        file,
-        "FISHEYE CAMERA MODEL CONVERSION ANALYSIS REPORT - RUST IMPLEMENTATION"
-    )?;
-    writeln!(
-        file,
-        "====================================================================="
-    )?;
-    writeln!(file)?;
-
-    writeln!(file, "OPTIMIZATION FRAMEWORK: tiny-solver (Rust)")?;
-    writeln!(file, "ALGORITHM: Levenberg-Marquardt")?;
-    writeln!(file, "3D POINT CORRESPONDENCES: {}", points_3d.ncols())?;
-    writeln!(file, "2D POINT CORRESPONDENCES: {}", points_2d.ncols())?;
-    writeln!(file)?;
-
-    // Input model parameters
-    let input_intrinsics = input_model.get_intrinsics();
-    let input_resolution = input_model.get_resolution();
-    let input_distortion = input_model.get_distortion();
-
-    writeln!(file, "INPUT MODEL PARAMETERS:")?;
-    writeln!(file, "  fx: {:.15}", input_intrinsics.fx)?;
-    writeln!(file, "  fy: {:.15}", input_intrinsics.fy)?;
-    writeln!(file, "  cx: {:.15}", input_intrinsics.cx)?;
-    writeln!(file, "  cy: {:.15}", input_intrinsics.cy)?;
-
-    for (i, param) in input_distortion.iter().enumerate() {
-        writeln!(file, "  distortion[{}]: {:.15}", i, param)?;
-    }
-
-    writeln!(
-        file,
-        "  Resolution: {}x{}",
-        input_resolution.width, input_resolution.height
-    )?;
-    writeln!(file)?;
-
-    // Output model parameters
-    let output_intrinsics = output_model.get_intrinsics();
-    let output_resolution = output_model.get_resolution();
-    let output_distortion = output_model.get_distortion();
-
-    writeln!(file, "OUTPUT MODEL PARAMETERS:")?;
-    writeln!(file, "  fx: {:.15}", output_intrinsics.fx)?;
-    writeln!(file, "  fy: {:.15}", output_intrinsics.fy)?;
-    writeln!(file, "  cx: {:.15}", output_intrinsics.cx)?;
-    writeln!(file, "  cy: {:.15}", output_intrinsics.cy)?;
-
-    for (i, param) in output_distortion.iter().enumerate() {
-        writeln!(file, "  distortion[{}]: {:.15}", i, param)?;
-    }
-
-    writeln!(
-        file,
-        "  Resolution: {}x{}",
-        output_resolution.width, output_resolution.height
-    )?;
-    writeln!(file)?;
-
-    writeln!(file, "PERFORMANCE METRICS:")?;
-    writeln!(
-        file,
-        "  Average Reprojection Error: {:.6} pixels",
-        reprojection_error
-    )?;
-    writeln!(file)?;
-
-    writeln!(file, "COMPARISON WITH C++ IMPLEMENTATION:")?;
-    writeln!(
-        file,
-        "  Use the exported point correspondences to validate against C++ Ceres results"
-    )?;
-    writeln!(
-        file,
-        "  Files: point_correspondences.csv, point_correspondences_rust.txt"
-    )?;
-
-    println!("Analysis report saved to: {}", filename);
-
-    Ok(format!("Analysis report generated: {}", filename))
-}
-
 /// Display input model parameters
 ///
 /// # Arguments
@@ -1081,30 +831,6 @@ pub fn display_input_model_parameters(model_type: &str, camera_model: &dyn Camer
     }
 }
 
-/// Display conversion progress header
-///
-/// # Arguments
-///
-/// * `input_model_type` - Type of input model
-/// * `target_model` - Name of target model
-pub fn display_conversion_progress(input_model_type: &str, target_model: &str) {
-    let separator_length = match target_model {
-        "Double Sphere" => 32 + input_model_type.len(),
-        "Kannala-Brandt" => 32 + input_model_type.len(),
-        "Radial-Tangential" => 37 + input_model_type.len(),
-        "Unified Camera Model" => 40 + input_model_type.len(),
-        "Extended Unified Camera Model" => 49 + input_model_type.len(),
-        _ => 32 + input_model_type.len(),
-    };
-
-    println!(
-        "\n📐 Converting {} → {}",
-        input_model_type.to_uppercase(),
-        target_model
-    );
-    println!("{}", "-".repeat(separator_length));
-}
-
 /// Display detailed results for a conversion
 ///
 /// # Arguments
@@ -1112,61 +838,7 @@ pub fn display_conversion_progress(input_model_type: &str, target_model: &str) {
 /// * `metrics` - Conversion metrics containing all the results
 pub fn display_detailed_results(metrics: &ConversionMetrics) {
     println!("\n📊 Final Output Model Parameters:");
-    let params_msg = if metrics.model_name == "Double Sphere" {
-        format!(
-            "DS parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}, xi={:.6}",
-            metrics.fx,
-            metrics.fy,
-            metrics.cx,
-            metrics.cy,
-            metrics.distortion_params[0],
-            metrics.distortion_params[1]
-        )
-    } else if metrics.model_name == "Extended Unified Camera Model" {
-        format!(
-            "EUCM parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}, beta={:.6}",
-            metrics.fx,
-            metrics.fy,
-            metrics.cx,
-            metrics.cy,
-            metrics.distortion_params[0],
-            metrics.distortion_params[1]
-        )
-    } else if metrics.model_name == "Unified Camera Model" {
-        format!(
-            "UCM parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, alpha={:.6}",
-            metrics.fx, metrics.fy, metrics.cx, metrics.cy, metrics.distortion_params[0]
-        )
-    } else if metrics.model_name == "Radial-Tangential" {
-        format!(
-            "RadTan parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, k1={:.6}, k2={:.6}, p1={:.6}, p2={:.6}, k3={:.6}",
-            metrics.fx,
-            metrics.fy,
-            metrics.cx,
-            metrics.cy,
-            metrics.distortion_params[0],
-            metrics.distortion_params[1],
-            metrics.distortion_params[2],
-            metrics.distortion_params[3],
-            metrics.distortion_params[4]
-        )
-    } else if metrics.model_name == "Kannala-Brandt" {
-        format!(
-            "KB parameters: fx={:.3}, fy={:.3}, cx={:.3}, cy={:.3}, k1={:.6}, k2={:.6}, k3={:.6}, k4={:.6}",
-            metrics.fx,
-            metrics.fy,
-            metrics.cx,
-            metrics.cy,
-            metrics.distortion_params[0],
-            metrics.distortion_params[1],
-            metrics.distortion_params[2],
-            metrics.distortion_params[3]
-        )
-    } else {
-        "Unknown model".to_string()
-    };
-
-    println!("{}", params_msg);
+    println!("{:?}", metrics.model);
     println!("computing time(ms): {:.0}", metrics.optimization_time_ms);
 
     println!("\n🧪 EVALUATION AND VALIDATION:");
@@ -1240,13 +912,6 @@ pub fn display_detailed_results(metrics: &ConversionMetrics) {
     } else {
         println!("  ⚠️  Conversion Accuracy: {}", validation.status);
     }
-
-    println!("\n📊 Generating Detailed Analysis Report...");
-    println!("Analysis report saved to: rust_conversion_analysis.txt");
-
-    // Calculate meaningful parameter error metric
-    let param_error = metrics.parameter_changes.total_parameter_change;
-    println!("parameter error: {:.6}", param_error);
 
     // Note: PSNR and SSIM require image data and are not calculated here
     // These would be computed by assess_image_quality() if image data is available
@@ -1340,24 +1005,6 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
         input_model_type.to_lowercase()
     );
     println!("📄 Results exported to: {}", report_filename);
-
-    // Step 7: Final assessment
-    println!("\n🎉 CONVERSION COMPLETE!");
-    println!("=======================");
-    println!(
-        "✅ {} model successfully converted to {} target models",
-        input_model_type.to_uppercase(),
-        metrics.len()
-    );
-    println!("✅ All conversions use tiny-solver optimization framework");
-    println!("✅ Analytical Jacobians employed for efficiency");
-    println!("✅ Mathematical correctness validated");
-
-    if avg_error < 0.1 {
-        println!("✅ GOOD: Average reprojection error < 0.1 pixels");
-    } else {
-        println!("❌ POOR: Average reprojection error > 0.1 pixels - needs investigation");
-    }
 }
 
 impl From<std::io::Error> for GeometryError {
