@@ -126,7 +126,7 @@ impl UcmModel {
             alpha: parameters[4],
         };
 
-        info!("new UCM model is: {:?}", model);
+        info!("new UCM model is: {model:?}");
         Ok(model)
     }
 

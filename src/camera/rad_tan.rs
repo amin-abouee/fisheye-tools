@@ -407,10 +407,7 @@ impl CameraModel for RadTanModel {
             if iteration == MAX_ITERATIONS - 1 {
                 return Err(CameraModelError::NumericalError(
                     // Original message: "Unprojection did not converge after {MAX_ITERATIONS} iterations.".to_string(),
-                    format!(
-                        "Unprojection did not converge after {} iterations.",
-                        MAX_ITERATIONS
-                    ),
+                    format!("Unprojection did not converge after {MAX_ITERATIONS} iterations."),
                 ));
             }
         }
@@ -512,8 +509,7 @@ impl CameraModel for RadTanModel {
         for (i, param) in distortion_node.iter().enumerate() {
             let value = param.as_f64().ok_or_else(|| {
                 CameraModelError::InvalidParams(format!(
-                    "Invalid distortion parameter at index {}", // Original: no float specification
-                    i
+                    "Invalid distortion parameter at index {i}" // Original: no float specification
                 ))
             })?;
             // Assign the parsed value to the corresponding index in the array
@@ -809,10 +805,7 @@ mod tests {
             let pixel_point = match model.project(original_point) {
                 Ok(p) => p,
                 Err(e) => {
-                    println!(
-                        "Point {} at {:?} failed projection: {:?}",
-                        i, original_point, e
-                    );
+                    println!("Point {i} at {original_point:?} failed projection: {e:?}");
                     continue; // Skip points that fail projection
                 }
             };
@@ -822,10 +815,7 @@ mod tests {
                 Ok(r) => r,
                 Err(e) => {
                     // Original test did not panic here but continued.
-                    println!(
-                        "Point {} at pixel {:?} failed unprojection: {:?}",
-                        i, pixel_point, e
-                    );
+                    println!("Point {i} at pixel {pixel_point:?} failed unprojection: {e:?}");
                     continue;
                 }
             };
@@ -837,8 +827,7 @@ mod tests {
             // Assert with helpful debug information
             // Original test used 0.99, which is fine.
             assert!(dot_product > 0.99,
-                    "Test point {}: Direction mismatch. Original: {:?}, Unprojected: {:?}, Dot product: {}",
-                    i, original_direction, ray_direction, dot_product);
+                    "Test point {i}: Direction mismatch. Original: {original_direction:?}, Unprojected: {ray_direction:?}, Dot product: {dot_product}");
         }
     }
 }

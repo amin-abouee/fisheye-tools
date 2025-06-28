@@ -149,7 +149,7 @@ impl DoubleSphereModel {
 
         // model.validate_params()?; // Original code has this commented out.
         // Documenting current behavior: validate_params is not called here.
-        info!("new model is: {:?}", model);
+        info!("new model is: {model:?}");
         Ok(model)
     }
 

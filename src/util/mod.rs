@@ -406,7 +406,7 @@ fn rgb_to_grayscale(img: &RgbImage) -> GrayImage {
 /// * `Result<RgbImage, UtilError>` - Loaded RGB image
 pub fn load_image(image_path: &str) -> Result<RgbImage, UtilError> {
     let img = image::open(image_path)
-        .map_err(|e| UtilError::InvalidParams(format!("Failed to load image: {}", e)))?;
+        .map_err(|e| UtilError::InvalidParams(format!("Failed to load image: {e}")))?;
 
     Ok(img.to_rgb8())
 }
@@ -485,9 +485,9 @@ pub fn export_point_correspondences(
     }
 
     // Export to CSV format
-    let csv_filename = format!("{}.csv", filename_prefix);
+    let csv_filename = format!("{filename_prefix}.csv");
     let mut csv_file = File::create(&csv_filename)
-        .map_err(|e| UtilError::NumericalError(format!("Failed to create CSV file: {}", e)))?;
+        .map_err(|e| UtilError::NumericalError(format!("Failed to create CSV file: {e}")))?;
 
     writeln!(
         csv_file,
@@ -507,9 +507,9 @@ pub fn export_point_correspondences(
     }
 
     // Export to Rust format
-    let rust_filename = format!("{}_rust.txt", filename_prefix);
+    let rust_filename = format!("{filename_prefix}_rust.txt");
     let mut rust_file = File::create(&rust_filename)
-        .map_err(|e| UtilError::NumericalError(format!("Failed to create Rust file: {}", e)))?;
+        .map_err(|e| UtilError::NumericalError(format!("Failed to create Rust file: {e}")))?;
 
     writeln!(rust_file, "// 3D-2D Point Correspondences for Rust Import")?;
     writeln!(rust_file, "// Generated from Rust fisheye-tools")?;
@@ -548,8 +548,8 @@ pub fn export_point_correspondences(
     writeln!(rust_file, "]);")?;
 
     println!("Exported {} point correspondences to:", points_3d.ncols());
-    println!("  - {} (CSV format)", csv_filename);
-    println!("  - {} (Rust code format)", rust_filename);
+    println!("  - {csv_filename} (CSV format)");
+    println!("  - {rust_filename} (Rust code format)");
 
     Ok(())
 }
@@ -750,13 +750,10 @@ where
     let psnr = calculate_psnr(&input_image, &output_image)?;
     let ssim = calculate_ssim(&input_image, &output_image)?;
 
-    let report = format!(
-        "Image Quality Assessment:\n  PSNR: {:.2} dB\n  SSIM: {:.4}\n",
-        psnr, ssim
-    );
+    let report = format!("Image Quality Assessment:\n  PSNR: {psnr:.2} dB\n  SSIM: {ssim:.4}\n");
 
-    println!("PSNR from input model to output model: {:.2}", psnr);
-    println!("SSIM from input model to output model: {:.4}", ssim);
+    println!("PSNR from input model to output model: {psnr:.2}");
+    println!("SSIM from input model to output model: {ssim:.4}");
 
     Ok(report)
 }
@@ -891,14 +888,14 @@ pub fn display_detailed_results(metrics: &ConversionMetrics) {
                         error
                     );
                 } else {
-                    println!("  {}: Projection failed", name);
+                    println!("  {name}: Projection failed");
                 }
             } else {
                 // Fallback for when region_data is not populated
-                println!("  {}: Error: {:.4} px", name, error);
+                println!("  {name}: Error: {error:.4} px");
             }
         } else {
-            println!("  {}: Projection failed", name);
+            println!("  {name}: Projection failed");
         }
     }
 
@@ -992,8 +989,8 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
     let avg_time =
         metrics.iter().map(|m| m.optimization_time_ms).sum::<f64>() / metrics.len() as f64;
 
-    println!("📊 Average Reprojection Error: {:.6} pixels", avg_error);
-    println!("📊 Average Optimization Time: {:.2} ms", avg_time);
+    println!("📊 Average Reprojection Error: {avg_error:.6} pixels");
+    println!("📊 Average Optimization Time: {avg_time:.2} ms");
 
     // Step 6: Export results using util module
     println!("\n💾 Step 6: Exporting Results");
@@ -1004,7 +1001,7 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
         "camera_conversion_results_{}.txt",
         input_model_type.to_lowercase()
     );
-    println!("📄 Results exported to: {}", report_filename);
+    println!("📄 Results exported to: {report_filename}");
 }
 
 impl From<std::io::Error> for UtilError {

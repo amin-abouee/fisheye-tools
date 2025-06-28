@@ -354,8 +354,7 @@ impl Optimizer for KannalaBrandtOptimizationCost {
         let svd = a_mat.svd(true, true);
         let x_coeffs = svd.solve(&b_vec, f64::EPSILON).map_err(|e_str| {
             CameraModelError::NumericalError(format!(
-                "SVD solve failed in linear estimation: {}",
-                e_str
+                "SVD solve failed in linear estimation: {e_str}"
             ))
         })?;
         self.model.distortions = [x_coeffs[0], x_coeffs[1], x_coeffs[2], x_coeffs[3]];
@@ -424,8 +423,7 @@ impl KannalaBrandtOptimizationCost {
         }
 
         info!(
-            "Kannala-Brandt optimization validation: {} point correspondences ready for tiny-solver",
-            total_points
+            "Kannala-Brandt optimization validation: {total_points} point correspondences ready for tiny-solver"
         );
 
         Ok(true)

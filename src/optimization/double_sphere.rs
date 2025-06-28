@@ -181,7 +181,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
         if let Ok(error_statistic) =
             compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d)
         {
-            info!("Before Optimization: {:?}", error_statistic);
+            info!("Before Optimization: {error_statistic:?}");
         }
 
         // Create a tiny_solver Problem
@@ -254,7 +254,7 @@ impl Optimizer for DoubleSphereOptimizationCost {
         if let Ok(error_statistic) =
             compute_reprojection_error(Some(&self.model), &self.points3d, &self.points2d)
         {
-            info!("After Optimization: {:?}", error_statistic);
+            info!("After Optimization: {error_statistic:?}");
         }
 
         Ok(())
@@ -439,8 +439,8 @@ mod tests {
         ]))
         .unwrap();
 
-        info!("Reference model: {:?}", reference_model);
-        info!("Noisy model: {:?}", noisy_model);
+        info!("Reference model: {reference_model:?}");
+        info!("Noisy model: {noisy_model:?}");
 
         let mut optimization_task = DoubleSphereOptimizationCost::new(
             noisy_model.clone(),
@@ -451,12 +451,12 @@ mod tests {
         match optimization_task.optimize(true) {
             Ok(()) => info!("Optimization succeeded"),
             Err(e) => {
-                info!("Optimization failed with error: {:?}", e);
+                info!("Optimization failed with error: {e:?}");
                 return;
             }
         }
 
-        info!("Optimized model with tiny_solver: {:?}", optimization_task);
+        info!("Optimized model with tiny_solver: {optimization_task:?}");
 
         let fx_diff = (optimization_task.model.intrinsics.fx - reference_model.intrinsics.fx).abs();
         let fy_diff = (optimization_task.model.intrinsics.fy - reference_model.intrinsics.fy).abs();
@@ -493,33 +493,27 @@ mod tests {
 
         assert!(
             fx_diff < 1.0,
-            "fx parameter didn't converge to expected value. Diff: {:.6}",
-            fx_diff
+            "fx parameter didn't converge to expected value. Diff: {fx_diff:.6}"
         );
         assert!(
             fy_diff < 1.0,
-            "fy parameter didn't converge to expected value. Diff: {:.6}",
-            fy_diff
+            "fy parameter didn't converge to expected value. Diff: {fy_diff:.6}"
         );
         assert!(
             cx_diff < 1.0,
-            "cx parameter didn't converge to expected value. Diff: {:.6}",
-            cx_diff
+            "cx parameter didn't converge to expected value. Diff: {cx_diff:.6}"
         );
         assert!(
             cy_diff < 1.0,
-            "cy parameter didn't converge to expected value. Diff: {:.6}",
-            cy_diff
+            "cy parameter didn't converge to expected value. Diff: {cy_diff:.6}"
         );
         assert!(
             alpha_diff < 0.05,
-            "alpha parameter didn't converge to expected value. Diff: {:.6}",
-            alpha_diff
+            "alpha parameter didn't converge to expected value. Diff: {alpha_diff:.6}"
         );
         assert!(
             xi_diff < 0.05,
-            "xi parameter didn't converge to expected value. Diff: {:.6}",
-            xi_diff
+            "xi parameter didn't converge to expected value. Diff: {xi_diff:.6}"
         );
         assert!(
             optimization_task.model.alpha > 0.0 && optimization_task.model.alpha <= 1.0,

@@ -758,7 +758,7 @@ mod tests {
         assert!(model_result.is_err());
         match model_result.err().unwrap() {
             CameraModelError::IOError(_) => {} // Expected
-            other_error => panic!("Expected IOError, got {:?}", other_error),
+            other_error => panic!("Expected IOError, got {other_error:?}"),
         }
     }
 
@@ -804,10 +804,10 @@ mod tests {
                             epsilon = 1e-5
                         );
                     }
-                    Err(e) => panic!("Unprojection failed: {:?}", e),
+                    Err(e) => panic!("Unprojection failed: {e:?}"),
                 }
             }
-            Err(e) => panic!("Projection failed: {:?}", e),
+            Err(e) => panic!("Projection failed: {e:?}"),
         }
     }
 

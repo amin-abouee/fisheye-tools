@@ -141,7 +141,7 @@ impl EucmModel {
             beta: parameters[5],
         };
 
-        info!("new EUCM model is: {:?}", model);
+        info!("new EUCM model is: {model:?}");
         Ok(model)
     }
 
