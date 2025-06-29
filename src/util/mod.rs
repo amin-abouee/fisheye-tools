@@ -954,7 +954,7 @@ pub fn save_model_projection_image(image: &RgbImage, model_name: &str) -> Result
 
     // Convert model name to lowercase and replace spaces with underscores
     let filename_safe_name = model_name.to_lowercase().replace(' ', "_");
-    let filename = format!("output/{}_projection.png", filename_safe_name);
+    let filename = format!("output/{filename_safe_name}_projection.png");
 
     image
         .save(&filename)
@@ -1245,13 +1245,11 @@ pub fn export_conversion_results(
 
     writeln!(
         report_file,
-        "📊 Average Reprojection Error: {:.6} pixels",
-        avg_error
+        "📊 Average Reprojection Error: {avg_error:.6} pixels"
     )?;
     writeln!(
         report_file,
-        "📊 Average Optimization Time: {:.2} ms",
-        avg_time
+        "📊 Average Optimization Time: {avg_time:.2} ms"
     )?;
     writeln!(report_file)?;
 
