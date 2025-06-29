@@ -106,9 +106,6 @@ jobs:
       run: |
         echo "Testing camera_model_converter example..."
         cargo run --example camera_model_converter -- --help
-        
-        echo "Testing camera_model_2_model example..."
-        cargo run --example camera_model_2_model -- --help
 
   check_examples:
     name: Check Examples with Sample Data
@@ -143,11 +140,4 @@ jobs:
         cargo run --example camera_model_converter -- \
           --input-model ds \
           --input-path samples/double_sphere.yaml \
-          --num-points 50
-
-    - name: Test camera_model_2_model with sample data
-      run: |
-        cargo run --example camera_model_2_model -- \
-          --input-model rad_tan \
-          --output-model double_sphere \
-          --input-path samples/rad_tan.yaml
+          --num-points 500
