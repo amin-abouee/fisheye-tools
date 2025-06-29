@@ -960,8 +960,8 @@ pub fn compute_image_quality_metrics(
                 input_projections.push(input_proj);
                 output_projections.push(output_proj);
 
-                // Use bright magenta color for visibility
-                valid_colors.push(Rgb([255, 0, 255]));
+                // Colors will be determined when drawing projections
+                valid_colors.push(Rgb([255, 255, 255]));
             }
         }
     }
@@ -970,15 +970,19 @@ pub fn compute_image_quality_metrics(
         return Err(UtilError::ZeroProjectionPoints);
     }
 
-    // Create output projection image for display (projected onto reference image if available)
-    let output_display_image = if let Some(ref_img) = reference_image {
-        create_projection_image_on_reference(&output_projections, &valid_colors, ref_img)?
+    // Create projection image with both input and output projections for comparison
+    let combined_display_image = if let Some(ref_img) = reference_image {
+        create_combined_projection_image_on_reference(
+            &input_projections,
+            &output_projections,
+            ref_img,
+        )?
     } else {
-        create_projection_image(&output_projections, &valid_colors, width, height)?
+        create_combined_projection_image(&input_projections, &output_projections, width, height)?
     };
 
-    // Save the output model projection image with model-specific name
-    save_model_projection_image(&output_display_image, output_model_name)?;
+    // Save the combined projection image
+    save_model_projection_image(&combined_display_image, output_model_name)?;
 
     // Create black background images for PSNR/SSIM computation (not saved)
     let input_comp_image =
@@ -1075,6 +1079,139 @@ pub fn create_projection_image_on_reference(
 
                     if x >= 0 && x < img.width() as i32 && y >= 0 && y < img.height() as i32 {
                         img.put_pixel(x as u32, y as u32, *color);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(img)
+}
+
+/// Create an image with both input and output projected points drawn as colored circles on a reference image
+///
+/// # Arguments
+///
+/// * `input_projections` - Vector of 2D projection points from input model
+/// * `output_projections` - Vector of 2D projection points from output model
+/// * `reference_image` - Reference image to draw points on
+///
+/// # Returns
+///
+/// * `Result<RgbImage, UtilError>` - Generated image with both projections
+pub fn create_combined_projection_image_on_reference(
+    input_projections: &[Vector2<f64>],
+    output_projections: &[Vector2<f64>],
+    reference_image: &RgbImage,
+) -> Result<RgbImage, UtilError> {
+    let mut img = reference_image.clone();
+
+    // Draw input projections as cyan circles
+    for projection in input_projections.iter() {
+        let center_x = projection.x.round() as i32;
+        let center_y = projection.y.round() as i32;
+
+        // Draw a small circle (radius 2)
+        let radius = 2;
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    let x = center_x + dx;
+                    let y = center_y + dy;
+
+                    if x >= 0 && x < img.width() as i32 && y >= 0 && y < img.height() as i32 {
+                        img.put_pixel(x as u32, y as u32, Rgb([0, 255, 0])); // Cyan for input
+                    }
+                }
+            }
+        }
+    }
+
+    // Draw output projections as magenta circles
+    for projection in output_projections.iter() {
+        let center_x = projection.x.round() as i32;
+        let center_y = projection.y.round() as i32;
+
+        // Draw a small circle (radius 2)
+        let radius = 2;
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    let x = center_x + dx;
+                    let y = center_y + dy;
+
+                    if x >= 0 && x < img.width() as i32 && y >= 0 && y < img.height() as i32 {
+                        img.put_pixel(x as u32, y as u32, Rgb([255, 0, 255])); // Magenta for output
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(img)
+}
+
+/// Create an image with both input and output projected points drawn as colored circles on black background
+///
+/// # Arguments
+///
+/// * `input_projections` - Vector of 2D projection points from input model
+/// * `output_projections` - Vector of 2D projection points from output model
+/// * `width` - Image width
+/// * `height` - Image height
+///
+/// # Returns
+///
+/// * `Result<RgbImage, UtilError>` - Generated image with both projections
+pub fn create_combined_projection_image(
+    input_projections: &[Vector2<f64>],
+    output_projections: &[Vector2<f64>],
+    width: u32,
+    height: u32,
+) -> Result<RgbImage, UtilError> {
+    let mut img = RgbImage::new(width, height);
+
+    // Fill with black background
+    for pixel in img.pixels_mut() {
+        *pixel = Rgb([0, 0, 0]);
+    }
+
+    // Draw input projections as cyan circles
+    for projection in input_projections.iter() {
+        let center_x = projection.x.round() as i32;
+        let center_y = projection.y.round() as i32;
+
+        // Draw a small circle (radius 2)
+        let radius = 2;
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    let x = center_x + dx;
+                    let y = center_y + dy;
+
+                    if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
+                        img.put_pixel(x as u32, y as u32, Rgb([0, 255, 255])); // Cyan for input
+                    }
+                }
+            }
+        }
+    }
+
+    // Draw output projections as magenta circles
+    for projection in output_projections.iter() {
+        let center_x = projection.x.round() as i32;
+        let center_y = projection.y.round() as i32;
+
+        // Draw a small circle (radius 2)
+        let radius = 2;
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    let x = center_x + dx;
+                    let y = center_y + dy;
+
+                    if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
+                        img.put_pixel(x as u32, y as u32, Rgb([255, 0, 255])); // Magenta for output
                     }
                 }
             }
