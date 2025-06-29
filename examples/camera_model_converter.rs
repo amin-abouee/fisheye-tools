@@ -185,6 +185,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         points_2d.ncols()
     );
 
+    // Create visualization of input model 2D projected points using utility function
+    println!("\n🎨 Creating Input Model Projection Visualization:");
+    let resolution = input_model.get_resolution();
+    util::model_projection_visualization(
+        &points_2d,
+        &cli.input_model,
+        reference_image.as_ref(),
+        (resolution.width, resolution.height),
+    )?;
+
     // Step 3: Run all conversions with detailed results after each
     println!("\n🔄 Step 3: Converting to All Target Models");
     println!("==========================================");

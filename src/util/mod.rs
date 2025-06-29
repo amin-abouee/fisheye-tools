@@ -7,11 +7,8 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-/// Type alias for projection data result
-type ProjectionDataResult = Result<(Matrix2xX<f64>, Matrix2xX<f64>, Matrix2xX<f64>), UtilError>;
-
 /// Ensure the output directory exists
-fn ensure_output_dir() -> Result<(), UtilError> {
+pub fn ensure_output_dir() -> Result<(), UtilError> {
     let output_dir = Path::new("output");
     if !output_dir.exists() {
         fs::create_dir_all(output_dir).map_err(|e| {
@@ -434,55 +431,6 @@ pub fn load_image(image_path: &str) -> Result<RgbImage, UtilError> {
     Ok(img.to_rgb8())
 }
 
-/// Generate an image from 2D points with optional colors
-///
-/// # Arguments
-///
-/// * `points_2d` - Matrix of 2D points
-/// * `width` - Image width
-/// * `height` - Image height
-/// * `reference_image` - Optional reference image for pixel colors
-///
-/// # Returns
-///
-/// * `Result<RgbImage, UtilError>` - Generated image
-pub fn get_image(
-    points_2d: &Matrix2xX<f64>,
-    width: u32,
-    height: u32,
-    reference_image: Option<&RgbImage>,
-) -> Result<RgbImage, UtilError> {
-    let mut img = RgbImage::new(width, height);
-
-    // Fill with black background
-    for pixel in img.pixels_mut() {
-        *pixel = Rgb([0, 0, 0]);
-    }
-
-    for col_idx in 0..points_2d.ncols() {
-        let point = points_2d.column(col_idx);
-        let x = point[0].round() as i32;
-        let y = point[1].round() as i32;
-
-        if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
-            let pixel_color = if let Some(ref_img) = reference_image {
-                // Use color from reference image if available
-                if x < ref_img.width() as i32 && y < ref_img.height() as i32 {
-                    *ref_img.get_pixel(x as u32, y as u32)
-                } else {
-                    Rgb([255, 255, 255]) // White for out-of-bounds
-                }
-            } else {
-                Rgb([255, 255, 255]) // White default
-            };
-
-            img.put_pixel(x as u32, y as u32, pixel_color);
-        }
-    }
-
-    Ok(img)
-}
-
 /// Export point correspondences to CSV and Rust format files
 ///
 /// # Arguments
@@ -722,194 +670,6 @@ where
 ///
 /// # Returns
 ///
-/// * `Result<String, UtilError>` - Image quality assessment report
-pub fn assess_image_quality<T1, T2>(
-    input_model: &T1,
-    output_model: &T2,
-    image_path: &str,
-) -> Result<String, UtilError>
-where
-    T1: CameraModel,
-    T2: CameraModel,
-{
-    let reference_image = load_image(image_path)?;
-    let resolution = input_model.get_resolution();
-    let width = resolution.width;
-    let height = resolution.height;
-
-    // Generate sample points for comparison
-    let (points_2d, points_3d) = sample_points(Some(input_model), 10000)?;
-
-    // Project through input model (should be identity for original points)
-    let mut input_projected_points = Matrix2xX::zeros(points_2d.ncols());
-    for i in 0..points_3d.ncols() {
-        let p3d = points_3d.column(i).into_owned();
-        if let Ok(p2d) = input_model.project(&p3d) {
-            input_projected_points.set_column(i, &p2d);
-        }
-    }
-
-    // Project through output model
-    let mut output_projected_points = Matrix2xX::zeros(points_2d.ncols());
-    for i in 0..points_3d.ncols() {
-        let p3d = points_3d.column(i).into_owned();
-        if let Ok(p2d) = output_model.project(&p3d) {
-            output_projected_points.set_column(i, &p2d);
-        }
-    }
-
-    // Generate images
-    let input_image = get_image(
-        &input_projected_points,
-        width,
-        height,
-        Some(&reference_image),
-    )?;
-    let output_image = get_image(
-        &output_projected_points,
-        width,
-        height,
-        Some(&reference_image),
-    )?;
-
-    // Calculate quality metrics
-    let psnr = calculate_psnr(&input_image, &output_image)?;
-    let ssim = calculate_ssim(&input_image, &output_image)?;
-
-    let report = format!("Image Quality Assessment:\n  PSNR: {psnr:.2} dB\n  SSIM: {ssim:.4}\n");
-
-    println!("PSNR from input model to output model: {psnr:.2}");
-    println!("SSIM from input model to output model: {ssim:.4}");
-
-    Ok(report)
-}
-
-/// Prepare projection data by unprojecting every pixel using input model and reprojecting with both models
-/// This mimics the C++ adapter.cpp prepare_data function
-///
-/// # Arguments
-///
-/// * `input_model` - Input camera model for unprojection
-/// * `output_model` - Output camera model for comparison
-///
-/// # Returns
-///
-/// * `ProjectionDataResult` -
-///   (original_points, input_projected_points, output_projected_points)
-pub fn prepare_projection_data<T1, T2>(input_model: &T1, output_model: &T2) -> ProjectionDataResult
-where
-    T1: CameraModel,
-    T2: CameraModel,
-{
-    let resolution = input_model.get_resolution();
-    let width = resolution.width;
-    let height = resolution.height;
-
-    let _total_pixels = (width * height) as usize;
-    let mut original_points = Vec::new();
-    let mut input_projected_points = Vec::new();
-    let mut output_projected_points = Vec::new();
-
-    // For every pixel in the image
-    for y in 0..height {
-        for x in 0..width {
-            let point_2d = Vector2::new(x as f64, y as f64);
-
-            // Unproject using input model to get 3D point
-            if let Ok(point_3d) = input_model.unproject(&point_2d) {
-                // Only process points with positive Z (in front of camera)
-                if point_3d.z > 0.0 {
-                    // Project 3D point back using input model (should be close to original)
-                    if let Ok(input_proj) = input_model.project(&point_3d) {
-                        // Project 3D point using output model
-                        if let Ok(output_proj) = output_model.project(&point_3d) {
-                            original_points.push(point_2d);
-                            input_projected_points.push(input_proj);
-                            output_projected_points.push(output_proj);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Convert vectors to matrices
-    let n_points = original_points.len();
-    let mut orig_matrix = Matrix2xX::zeros(n_points);
-    let mut input_matrix = Matrix2xX::zeros(n_points);
-    let mut output_matrix = Matrix2xX::zeros(n_points);
-
-    for (i, ((orig, input_proj), output_proj)) in original_points
-        .iter()
-        .zip(input_projected_points.iter())
-        .zip(output_projected_points.iter())
-        .enumerate()
-    {
-        orig_matrix.set_column(i, orig);
-        input_matrix.set_column(i, input_proj);
-        output_matrix.set_column(i, output_proj);
-    }
-
-    Ok((orig_matrix, input_matrix, output_matrix))
-}
-
-/// Prepare projection data using trait objects (for use with dyn CameraModel)
-pub fn prepare_projection_data_dyn(
-    input_model: &dyn CameraModel,
-    output_model: &dyn CameraModel,
-) -> ProjectionDataResult {
-    let resolution = input_model.get_resolution();
-    let width = resolution.width;
-    let height = resolution.height;
-
-    let _total_pixels = (width * height) as usize;
-    let mut original_points = Vec::new();
-    let mut input_projected_points = Vec::new();
-    let mut output_projected_points = Vec::new();
-
-    // For every pixel in the image
-    for y in 0..height {
-        for x in 0..width {
-            let point_2d = Vector2::new(x as f64, y as f64);
-
-            // Unproject using input model to get 3D point
-            if let Ok(point_3d) = input_model.unproject(&point_2d) {
-                // Only process points with positive Z (in front of camera)
-                if point_3d.z > 0.0 {
-                    // Project 3D point back using input model (should be close to original)
-                    if let Ok(input_proj) = input_model.project(&point_3d) {
-                        // Project 3D point using output model
-                        if let Ok(output_proj) = output_model.project(&point_3d) {
-                            original_points.push(point_2d);
-                            input_projected_points.push(input_proj);
-                            output_projected_points.push(output_proj);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Convert vectors to matrices
-    let n_points = original_points.len();
-    let mut orig_matrix = Matrix2xX::zeros(n_points);
-    let mut input_matrix = Matrix2xX::zeros(n_points);
-    let mut output_matrix = Matrix2xX::zeros(n_points);
-
-    for (i, ((orig, input_proj), output_proj)) in original_points
-        .iter()
-        .zip(input_projected_points.iter())
-        .zip(output_projected_points.iter())
-        .enumerate()
-    {
-        orig_matrix.set_column(i, orig);
-        input_matrix.set_column(i, input_proj);
-        output_matrix.set_column(i, output_proj);
-    }
-
-    Ok((orig_matrix, input_matrix, output_matrix))
-}
-
 /// Compute image quality metrics (PSNR and SSIM) by comparing projections from input and output models
 ///
 /// # Arguments
@@ -1046,48 +806,6 @@ pub fn create_projection_image(
     Ok(img)
 }
 
-/// Create an image with projected points drawn as colored circles on a reference image
-///
-/// # Arguments
-///
-/// * `projections` - Vector of 2D projection points
-/// * `colors` - Vector of colors for each point
-/// * `reference_image` - Reference image to draw points on
-///
-/// # Returns
-///
-/// * `Result<RgbImage, UtilError>` - Generated image
-pub fn create_projection_image_on_reference(
-    projections: &[Vector2<f64>],
-    colors: &[Rgb<u8>],
-    reference_image: &RgbImage,
-) -> Result<RgbImage, UtilError> {
-    let mut img = reference_image.clone();
-
-    // Draw each projection as a small colored circle
-    for (projection, color) in projections.iter().zip(colors.iter()) {
-        let center_x = projection.x.round() as i32;
-        let center_y = projection.y.round() as i32;
-
-        // Draw a small circle (radius 2)
-        let radius = 2;
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy <= radius * radius {
-                    let x = center_x + dx;
-                    let y = center_y + dy;
-
-                    if x >= 0 && x < img.width() as i32 && y >= 0 && y < img.height() as i32 {
-                        img.put_pixel(x as u32, y as u32, *color);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(img)
-}
-
 /// Create an image with both input and output projected points drawn as colored circles on a reference image
 ///
 /// # Arguments
@@ -1190,7 +908,7 @@ pub fn create_combined_projection_image(
                     let y = center_y + dy;
 
                     if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
-                        img.put_pixel(x as u32, y as u32, Rgb([0, 255, 255])); // Cyan for input
+                        img.put_pixel(x as u32, y as u32, Rgb([0, 255, 0])); // Green for input
                     }
                 }
             }
@@ -1700,6 +1418,83 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
         );
         println!("📄 Results exported to: {report_filename}");
     }
+}
+
+/// Create and save input model projection visualization from 2D points
+///
+/// This function creates a visualization of 2D projected points, either on a reference image
+/// (if provided) or on a black background. Points are drawn as green circles.
+///
+/// # Arguments
+///
+/// * `points_2d` - Matrix of 2D projection points
+/// * `model_name` - Name of the input model for filename generation
+/// * `reference_image` - Optional reference image to project points onto
+/// * `camera_resolution` - Camera resolution for image dimensions when no reference image
+///
+/// # Returns
+///
+/// * `Result<(), UtilError>` - Success or error
+pub fn model_projection_visualization(
+    points_2d: &Matrix2xX<f64>,
+    model_name: &str,
+    reference_image: Option<&RgbImage>,
+    camera_resolution: (u32, u32), // (width, height)
+) -> Result<(), UtilError> {
+    // Convert Matrix2xX to Vec<Vector2<f64>>
+    let mut projections = Vec::new();
+    for col_idx in 0..points_2d.ncols() {
+        let point = points_2d.column(col_idx);
+        projections.push(Vector2::new(point[0], point[1]));
+    }
+
+    // Create the projection image
+    let projection_image = if let Some(ref_img) = reference_image {
+        // Project points onto the reference image
+        let mut img = ref_img.clone();
+
+        // Draw each projection as a green circle
+        for projection in projections.iter() {
+            let center_x = projection.x.round() as i32;
+            let center_y = projection.y.round() as i32;
+
+            // Draw a small circle (radius 2)
+            let radius = 2;
+            for dy in -radius..=radius {
+                for dx in -radius..=radius {
+                    if dx * dx + dy * dy <= radius * radius {
+                        let x = center_x + dx;
+                        let y = center_y + dy;
+
+                        if x >= 0 && x < img.width() as i32 && y >= 0 && y < img.height() as i32 {
+                            img.put_pixel(x as u32, y as u32, Rgb([0, 255, 0]));
+                            // Green
+                        }
+                    }
+                }
+            }
+        }
+        img
+    } else {
+        // Create projection on black background
+        let green_colors = vec![Rgb([0, 255, 0]); projections.len()];
+        create_projection_image(
+            &projections,
+            &green_colors,
+            camera_resolution.0,
+            camera_resolution.1,
+        )?
+    };
+
+    // Save the image
+    ensure_output_dir()?;
+    let filename = format!("output/{}_projection.png", model_name.to_lowercase());
+    projection_image
+        .save(&filename)
+        .map_err(|e| UtilError::NumericalError(format!("Failed to save projection image: {e}")))?;
+
+    println!("Saved input model projection visualization: {filename}");
+    Ok(())
 }
 
 impl From<std::io::Error> for UtilError {
