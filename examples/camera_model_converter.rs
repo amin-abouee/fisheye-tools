@@ -55,6 +55,10 @@ struct Cli {
     /// Number of sample points to generate for optimization (default: 500)
     #[arg(short = 'n', long, default_value = "500")]
     num_points: usize,
+
+    /// Path to the input image for processing and quality assessment
+    #[arg(short = 'm', long)]
+    image_path: Option<PathBuf>,
 }
 
 // Structs moved to util module
@@ -109,15 +113,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("==============================================");
     println!(
         "Converting from {} model to all supported target models",
-        cli.input_model.to_uppercase()
+        cli.input_model.to_lowercase()
     );
     println!("Input file: {:?}", cli.input_path);
+    if let Some(ref image_path) = cli.image_path {
+        println!("Input image: {image_path:?}");
+    } else {
+        println!("Input image: None (synthetic image will be generated)");
+    }
     println!("Sample points: {}\n", cli.num_points);
 
     info!("🎯 COMPREHENSIVE CAMERA MODEL CONVERSION TOOL");
     info!(
         "Converting from {} model to all supported target models",
-        cli.input_model.to_uppercase()
+        cli.input_model.to_lowercase()
     );
 
     // Step 1: Load input model
@@ -129,8 +138,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!(
         "✅ Successfully loaded {} model from YAML",
-        cli.input_model.to_uppercase()
+        cli.input_model.to_lowercase()
     );
+
+    // Step 1.5: Load input image if provided
+    let reference_image = if let Some(ref image_path) = cli.image_path {
+        let image_path_str = image_path.to_str().ok_or("Invalid image path string")?;
+        match util::load_image(image_path_str) {
+            Ok(img) => {
+                println!("Successfully loaded input image: {image_path:?}");
+                println!("Image dimensions: {}x{}", img.width(), img.height());
+                Some(img)
+            }
+            Err(e) => {
+                println!("⚠️  Failed to load image: {e}");
+                println!("Continuing with synthetic image generation...");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Step 2: Generate sample points
     let (points_2d, points_3d) = util::sample_points(Some(&*input_model), cli.num_points)?;
@@ -169,10 +197,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         println!(
             "\n📐 Converting {} → Double Sphere",
-            cli.input_model.to_uppercase(),
+            cli.input_model.to_lowercase(),
         );
         println!("{}", "-".repeat(32 + cli.input_model.len()));
-        if let Ok(metrics) = convert_to_double_sphere(&*input_model, &points_3d, &points_2d) {
+        if let Ok(metrics) = convert_to_double_sphere(
+            &*input_model,
+            &points_3d,
+            &points_2d,
+            reference_image.as_ref(),
+        ) {
             all_metrics.push(metrics);
         }
     }
@@ -184,10 +217,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         println!(
             "\n📐 Converting {} → Kannala-Brandt",
-            cli.input_model.to_uppercase(),
+            cli.input_model.to_lowercase(),
         );
         println!("{}", "-".repeat(32 + cli.input_model.len()));
-        if let Ok(metrics) = convert_to_kannala_brandt(&*input_model, &points_3d, &points_2d) {
+        if let Ok(metrics) = convert_to_kannala_brandt(
+            &*input_model,
+            &points_3d,
+            &points_2d,
+            reference_image.as_ref(),
+        ) {
             all_metrics.push(metrics);
         }
     }
@@ -199,10 +237,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         println!(
             "\n📐 Converting {} → Radial-Tangential",
-            cli.input_model.to_uppercase(),
+            cli.input_model.to_lowercase(),
         );
         println!("{}", "-".repeat(37 + cli.input_model.len()));
-        if let Ok(metrics) = convert_to_rad_tan(&*input_model, &points_3d, &points_2d) {
+        if let Ok(metrics) = convert_to_rad_tan(
+            &*input_model,
+            &points_3d,
+            &points_2d,
+            reference_image.as_ref(),
+        ) {
             all_metrics.push(metrics);
         }
     }
@@ -211,10 +254,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !matches!(cli.input_model.to_lowercase().as_str(), "ucm" | "unified") {
         println!(
             "\n📐 Converting {} → Unified Camera Model",
-            cli.input_model.to_uppercase(),
+            cli.input_model.to_lowercase(),
         );
         println!("{}", "-".repeat(40 + cli.input_model.len()));
-        if let Ok(metrics) = convert_to_ucm(&*input_model, &points_3d, &points_2d) {
+        if let Ok(metrics) = convert_to_ucm(
+            &*input_model,
+            &points_3d,
+            &points_2d,
+            reference_image.as_ref(),
+        ) {
             all_metrics.push(metrics);
         }
     }
@@ -226,10 +274,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         println!(
             "\n📐 Converting {} → Extended Unified Camera Model",
-            cli.input_model.to_uppercase(),
+            cli.input_model.to_lowercase(),
         );
         println!("{}", "-".repeat(49 + cli.input_model.len()));
-        if let Ok(metrics) = convert_to_eucm(&*input_model, &points_3d, &points_2d) {
+        if let Ok(metrics) = convert_to_eucm(
+            &*input_model,
+            &points_3d,
+            &points_2d,
+            reference_image.as_ref(),
+        ) {
             all_metrics.push(metrics);
         }
     }
@@ -251,6 +304,7 @@ fn convert_to_double_sphere(
     input_model: &dyn CameraModel,
     points_3d: &nalgebra::Matrix3xX<f64>,
     points_2d: &nalgebra::Matrix2xX<f64>,
+    reference_image: Option<&image::RgbImage>,
 ) -> Result<ConversionMetrics, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
 
@@ -310,6 +364,17 @@ fn convert_to_double_sphere(
             region_data: vec![],
         });
 
+    // Compute image quality metrics
+    let image_quality = util::compute_image_quality_metrics(
+        input_model,
+        &final_model,
+        points_3d,
+        "double_sphere",
+        reference_image,
+    )
+    .map_err(|e| info!("Failed to compute image quality metrics: {e:?}"))
+    .ok();
+
     let metrics = ConversionMetrics {
         model: CameraModelEnum::DoubleSphere(final_model),
         model_name: "Double Sphere".to_string(),
@@ -318,6 +383,7 @@ fn convert_to_double_sphere(
         optimization_time_ms: optimization_time,
         convergence_status,
         validation_results,
+        image_quality,
     };
 
     util::display_detailed_results(&metrics);
@@ -329,6 +395,7 @@ fn convert_to_kannala_brandt(
     input_model: &dyn CameraModel,
     points_3d: &nalgebra::Matrix3xX<f64>,
     points_2d: &nalgebra::Matrix2xX<f64>,
+    reference_image: Option<&image::RgbImage>,
 ) -> Result<ConversionMetrics, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
 
@@ -393,6 +460,17 @@ fn convert_to_kannala_brandt(
         Err(_) => "Linear Only".to_string(),
     };
 
+    // Compute image quality metrics
+    let image_quality = util::compute_image_quality_metrics(
+        input_model,
+        &final_model,
+        points_3d,
+        "kannala_brandt",
+        reference_image,
+    )
+    .map_err(|e| info!("Failed to compute image quality metrics: {e:?}"))
+    .ok();
+
     let metrics = ConversionMetrics {
         model: CameraModelEnum::KannalaBrandt(final_model),
         model_name: "Kannala-Brandt".to_string(),
@@ -401,6 +479,7 @@ fn convert_to_kannala_brandt(
         optimization_time_ms: optimization_time,
         convergence_status,
         validation_results,
+        image_quality,
     };
 
     util::display_detailed_results(&metrics);
@@ -411,6 +490,7 @@ fn convert_to_rad_tan(
     input_model: &dyn CameraModel,
     points_3d: &nalgebra::Matrix3xX<f64>,
     points_2d: &nalgebra::Matrix2xX<f64>,
+    reference_image: Option<&image::RgbImage>,
 ) -> Result<ConversionMetrics, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
 
@@ -474,6 +554,17 @@ fn convert_to_rad_tan(
             region_data: vec![],
         });
 
+    // Compute image quality metrics
+    let image_quality = util::compute_image_quality_metrics(
+        input_model,
+        &final_model,
+        points_3d,
+        "radial_tangential",
+        reference_image,
+    )
+    .map_err(|e| info!("Failed to compute image quality metrics: {e:?}"))
+    .ok();
+
     let metrics = ConversionMetrics {
         model: CameraModelEnum::RadTan(final_model),
         model_name: "Radial-Tangential".to_string(),
@@ -482,6 +573,7 @@ fn convert_to_rad_tan(
         optimization_time_ms: optimization_time,
         convergence_status,
         validation_results,
+        image_quality,
     };
 
     util::display_detailed_results(&metrics);
@@ -492,6 +584,7 @@ fn convert_to_ucm(
     input_model: &dyn CameraModel,
     points_3d: &nalgebra::Matrix3xX<f64>,
     points_2d: &nalgebra::Matrix2xX<f64>,
+    reference_image: Option<&image::RgbImage>,
 ) -> Result<ConversionMetrics, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
 
@@ -549,6 +642,17 @@ fn convert_to_ucm(
             region_data: vec![],
         });
 
+    // Compute image quality metrics
+    let image_quality = util::compute_image_quality_metrics(
+        input_model,
+        &final_model,
+        points_3d,
+        "unified_camera_model",
+        reference_image,
+    )
+    .map_err(|e| info!("Failed to compute image quality metrics: {e:?}"))
+    .ok();
+
     let metrics = ConversionMetrics {
         model: CameraModelEnum::Ucm(final_model),
         model_name: "Unified Camera Model".to_string(),
@@ -557,6 +661,7 @@ fn convert_to_ucm(
         optimization_time_ms: optimization_time,
         convergence_status,
         validation_results,
+        image_quality,
     };
 
     util::display_detailed_results(&metrics);
@@ -567,6 +672,7 @@ fn convert_to_eucm(
     input_model: &dyn CameraModel,
     points_3d: &nalgebra::Matrix3xX<f64>,
     points_2d: &nalgebra::Matrix2xX<f64>,
+    reference_image: Option<&image::RgbImage>,
 ) -> Result<ConversionMetrics, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
 
@@ -626,6 +732,17 @@ fn convert_to_eucm(
             region_data: vec![],
         });
 
+    // Compute image quality metrics
+    let image_quality = util::compute_image_quality_metrics(
+        input_model,
+        &final_model,
+        points_3d,
+        "extended_unified_camera_model",
+        reference_image,
+    )
+    .map_err(|e| info!("Failed to compute image quality metrics: {e:?}"))
+    .ok();
+
     let metrics = ConversionMetrics {
         model: CameraModelEnum::Eucm(final_model),
         model_name: "Extended Unified Camera Model".to_string(),
@@ -634,6 +751,7 @@ fn convert_to_eucm(
         optimization_time_ms: optimization_time,
         convergence_status,
         validation_results,
+        image_quality,
     };
 
     util::display_detailed_results(&metrics);

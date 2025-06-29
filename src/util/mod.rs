@@ -3,8 +3,23 @@ use image::{GrayImage, Rgb, RgbImage};
 use nalgebra::{Matrix2xX, Matrix3xX, Vector2};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
+use std::path::Path;
+
+/// Type alias for projection data result
+type ProjectionDataResult = Result<(Matrix2xX<f64>, Matrix2xX<f64>, Matrix2xX<f64>), UtilError>;
+
+/// Ensure the output directory exists
+fn ensure_output_dir() -> Result<(), UtilError> {
+    let output_dir = Path::new("output");
+    if !output_dir.exists() {
+        fs::create_dir_all(output_dir).map_err(|e| {
+            UtilError::InvalidParams(format!("Failed to create output directory: {e}"))
+        })?;
+    }
+    Ok(())
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum UtilError {
@@ -40,6 +55,13 @@ impl fmt::Debug for ProjectionError {
     }
 }
 
+/// Image quality metrics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageQualityMetrics {
+    pub psnr: f64,
+    pub ssim: f64,
+}
+
 /// Parameter estimation metrics with detailed model parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionMetrics {
@@ -50,6 +72,7 @@ pub struct ConversionMetrics {
     pub optimization_time_ms: f64,
     pub convergence_status: String,
     pub validation_results: ValidationResults,
+    pub image_quality: Option<ImageQualityMetrics>,
 }
 
 /// Validation results for conversion accuracy testing
@@ -484,8 +507,11 @@ pub fn export_point_correspondences(
         ));
     }
 
+    // Ensure output directory exists
+    ensure_output_dir()?;
+
     // Export to CSV format
-    let csv_filename = format!("{filename_prefix}.csv");
+    let csv_filename = format!("output/{filename_prefix}.csv");
     let mut csv_file = File::create(&csv_filename)
         .map_err(|e| UtilError::NumericalError(format!("Failed to create CSV file: {e}")))?;
 
@@ -507,7 +533,7 @@ pub fn export_point_correspondences(
     }
 
     // Export to Rust format
-    let rust_filename = format!("{filename_prefix}_rust.txt");
+    let rust_filename = format!("output/{filename_prefix}_rust.txt");
     let mut rust_file = File::create(&rust_filename)
         .map_err(|e| UtilError::NumericalError(format!("Failed to create Rust file: {e}")))?;
 
@@ -758,6 +784,331 @@ where
     Ok(report)
 }
 
+/// Prepare projection data by unprojecting every pixel using input model and reprojecting with both models
+/// This mimics the C++ adapter.cpp prepare_data function
+///
+/// # Arguments
+///
+/// * `input_model` - Input camera model for unprojection
+/// * `output_model` - Output camera model for comparison
+///
+/// # Returns
+///
+/// * `ProjectionDataResult` -
+///   (original_points, input_projected_points, output_projected_points)
+pub fn prepare_projection_data<T1, T2>(input_model: &T1, output_model: &T2) -> ProjectionDataResult
+where
+    T1: CameraModel,
+    T2: CameraModel,
+{
+    let resolution = input_model.get_resolution();
+    let width = resolution.width;
+    let height = resolution.height;
+
+    let _total_pixels = (width * height) as usize;
+    let mut original_points = Vec::new();
+    let mut input_projected_points = Vec::new();
+    let mut output_projected_points = Vec::new();
+
+    // For every pixel in the image
+    for y in 0..height {
+        for x in 0..width {
+            let point_2d = Vector2::new(x as f64, y as f64);
+
+            // Unproject using input model to get 3D point
+            if let Ok(point_3d) = input_model.unproject(&point_2d) {
+                // Only process points with positive Z (in front of camera)
+                if point_3d.z > 0.0 {
+                    // Project 3D point back using input model (should be close to original)
+                    if let Ok(input_proj) = input_model.project(&point_3d) {
+                        // Project 3D point using output model
+                        if let Ok(output_proj) = output_model.project(&point_3d) {
+                            original_points.push(point_2d);
+                            input_projected_points.push(input_proj);
+                            output_projected_points.push(output_proj);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert vectors to matrices
+    let n_points = original_points.len();
+    let mut orig_matrix = Matrix2xX::zeros(n_points);
+    let mut input_matrix = Matrix2xX::zeros(n_points);
+    let mut output_matrix = Matrix2xX::zeros(n_points);
+
+    for (i, ((orig, input_proj), output_proj)) in original_points
+        .iter()
+        .zip(input_projected_points.iter())
+        .zip(output_projected_points.iter())
+        .enumerate()
+    {
+        orig_matrix.set_column(i, orig);
+        input_matrix.set_column(i, input_proj);
+        output_matrix.set_column(i, output_proj);
+    }
+
+    Ok((orig_matrix, input_matrix, output_matrix))
+}
+
+/// Prepare projection data using trait objects (for use with dyn CameraModel)
+pub fn prepare_projection_data_dyn(
+    input_model: &dyn CameraModel,
+    output_model: &dyn CameraModel,
+) -> ProjectionDataResult {
+    let resolution = input_model.get_resolution();
+    let width = resolution.width;
+    let height = resolution.height;
+
+    let _total_pixels = (width * height) as usize;
+    let mut original_points = Vec::new();
+    let mut input_projected_points = Vec::new();
+    let mut output_projected_points = Vec::new();
+
+    // For every pixel in the image
+    for y in 0..height {
+        for x in 0..width {
+            let point_2d = Vector2::new(x as f64, y as f64);
+
+            // Unproject using input model to get 3D point
+            if let Ok(point_3d) = input_model.unproject(&point_2d) {
+                // Only process points with positive Z (in front of camera)
+                if point_3d.z > 0.0 {
+                    // Project 3D point back using input model (should be close to original)
+                    if let Ok(input_proj) = input_model.project(&point_3d) {
+                        // Project 3D point using output model
+                        if let Ok(output_proj) = output_model.project(&point_3d) {
+                            original_points.push(point_2d);
+                            input_projected_points.push(input_proj);
+                            output_projected_points.push(output_proj);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert vectors to matrices
+    let n_points = original_points.len();
+    let mut orig_matrix = Matrix2xX::zeros(n_points);
+    let mut input_matrix = Matrix2xX::zeros(n_points);
+    let mut output_matrix = Matrix2xX::zeros(n_points);
+
+    for (i, ((orig, input_proj), output_proj)) in original_points
+        .iter()
+        .zip(input_projected_points.iter())
+        .zip(output_projected_points.iter())
+        .enumerate()
+    {
+        orig_matrix.set_column(i, orig);
+        input_matrix.set_column(i, input_proj);
+        output_matrix.set_column(i, output_proj);
+    }
+
+    Ok((orig_matrix, input_matrix, output_matrix))
+}
+
+/// Compute image quality metrics (PSNR and SSIM) by comparing projections from input and output models
+///
+/// # Arguments
+///
+/// * `input_model` - Input camera model
+/// * `output_model` - Output camera model  
+/// * `optimization_points_3d` - The 3D points used in optimization
+/// * `output_model_name` - Name of the output model for file naming
+/// * `reference_image` - Optional reference image for coloring pixels
+///
+/// # Returns
+///
+/// * `Result<ImageQualityMetrics, UtilError>` - PSNR and SSIM values
+pub fn compute_image_quality_metrics(
+    input_model: &dyn CameraModel,
+    output_model: &dyn CameraModel,
+    optimization_points_3d: &Matrix3xX<f64>,
+    output_model_name: &str,
+    reference_image: Option<&RgbImage>,
+) -> Result<ImageQualityMetrics, UtilError> {
+    // Determine image dimensions - prefer reference image size if available
+    let (width, height) = if let Some(ref_img) = reference_image {
+        (ref_img.width(), ref_img.height())
+    } else {
+        let resolution = input_model.get_resolution();
+        (resolution.width, resolution.height)
+    };
+
+    // Project the optimization 3D points using both models
+    let mut input_projections = Vec::new();
+    let mut output_projections = Vec::new();
+    let mut valid_colors = Vec::new();
+
+    for col_idx in 0..optimization_points_3d.ncols() {
+        let point_3d = optimization_points_3d.column(col_idx);
+
+        // Project using both models
+        if let (Ok(input_proj), Ok(output_proj)) = (
+            input_model.project(&point_3d.into()),
+            output_model.project(&point_3d.into()),
+        ) {
+            // Check if output projection is within image bounds
+            if output_proj.x >= 0.0
+                && output_proj.x < width as f64
+                && output_proj.y >= 0.0
+                && output_proj.y < height as f64
+            {
+                input_projections.push(input_proj);
+                output_projections.push(output_proj);
+
+                // Use bright magenta color for visibility
+                valid_colors.push(Rgb([255, 0, 255]));
+            }
+        }
+    }
+
+    if output_projections.is_empty() {
+        return Err(UtilError::ZeroProjectionPoints);
+    }
+
+    // Create output projection image for display (projected onto reference image if available)
+    let output_display_image = if let Some(ref_img) = reference_image {
+        create_projection_image_on_reference(&output_projections, &valid_colors, ref_img)?
+    } else {
+        create_projection_image(&output_projections, &valid_colors, width, height)?
+    };
+
+    // Save the output model projection image with model-specific name
+    save_model_projection_image(&output_display_image, output_model_name)?;
+
+    // Create black background images for PSNR/SSIM computation (not saved)
+    let input_comp_image =
+        create_projection_image(&input_projections, &valid_colors, width, height)?;
+    let output_comp_image =
+        create_projection_image(&output_projections, &valid_colors, width, height)?;
+
+    // Calculate quality metrics using black background comparison images
+    let psnr = calculate_psnr(&input_comp_image, &output_comp_image)?;
+    let ssim = calculate_ssim(&input_comp_image, &output_comp_image)?;
+
+    Ok(ImageQualityMetrics { psnr, ssim })
+}
+
+/// Create an image with projected points drawn as colored circles
+///
+/// # Arguments
+///
+/// * `projections` - Vector of 2D projection points
+/// * `colors` - Vector of colors for each point
+/// * `width` - Image width
+/// * `height` - Image height
+///
+/// # Returns
+///
+/// * `Result<RgbImage, UtilError>` - Generated image
+pub fn create_projection_image(
+    projections: &[Vector2<f64>],
+    colors: &[Rgb<u8>],
+    width: u32,
+    height: u32,
+) -> Result<RgbImage, UtilError> {
+    let mut img = RgbImage::new(width, height);
+
+    // Fill with black background
+    for pixel in img.pixels_mut() {
+        *pixel = Rgb([0, 0, 0]);
+    }
+
+    // Draw each projection as a small colored circle
+    for (projection, color) in projections.iter().zip(colors.iter()) {
+        let center_x = projection.x.round() as i32;
+        let center_y = projection.y.round() as i32;
+
+        // Draw a small circle (radius 2)
+        let radius = 2;
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    let x = center_x + dx;
+                    let y = center_y + dy;
+
+                    if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
+                        img.put_pixel(x as u32, y as u32, *color);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(img)
+}
+
+/// Create an image with projected points drawn as colored circles on a reference image
+///
+/// # Arguments
+///
+/// * `projections` - Vector of 2D projection points
+/// * `colors` - Vector of colors for each point
+/// * `reference_image` - Reference image to draw points on
+///
+/// # Returns
+///
+/// * `Result<RgbImage, UtilError>` - Generated image
+pub fn create_projection_image_on_reference(
+    projections: &[Vector2<f64>],
+    colors: &[Rgb<u8>],
+    reference_image: &RgbImage,
+) -> Result<RgbImage, UtilError> {
+    let mut img = reference_image.clone();
+
+    // Draw each projection as a small colored circle
+    for (projection, color) in projections.iter().zip(colors.iter()) {
+        let center_x = projection.x.round() as i32;
+        let center_y = projection.y.round() as i32;
+
+        // Draw a small circle (radius 2)
+        let radius = 2;
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    let x = center_x + dx;
+                    let y = center_y + dy;
+
+                    if x >= 0 && x < img.width() as i32 && y >= 0 && y < img.height() as i32 {
+                        img.put_pixel(x as u32, y as u32, *color);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(img)
+}
+
+/// Save model projection image to the output directory with model-specific naming
+///
+/// # Arguments
+///
+/// * `image` - Image to save
+/// * `model_name` - Name of the model for filename
+///
+/// # Returns
+///
+/// * `Result<(), UtilError>` - Success or error
+pub fn save_model_projection_image(image: &RgbImage, model_name: &str) -> Result<(), UtilError> {
+    ensure_output_dir()?;
+
+    // Convert model name to lowercase and replace spaces with underscores
+    let filename_safe_name = model_name.to_lowercase().replace(' ', "_");
+    let filename = format!("output/{}_projection.png", filename_safe_name);
+
+    image
+        .save(&filename)
+        .map_err(|e| UtilError::InvalidParams(format!("Failed to save projection image: {e}")))?;
+
+    println!("📸 Saved projection image: {filename}");
+    Ok(())
+}
+
 /// Display input model parameters
 ///
 /// # Arguments
@@ -910,8 +1261,214 @@ pub fn display_detailed_results(metrics: &ConversionMetrics) {
         println!("  ⚠️  Conversion Accuracy: {}", validation.status);
     }
 
-    // Note: PSNR and SSIM require image data and are not calculated here
-    // These would be computed by assess_image_quality() if image data is available
+    // Print image quality metrics if available
+    if let Some(ref image_quality) = metrics.image_quality {
+        println!("\n📸 Image Quality Assessment:");
+        println!("  PSNR: {:.2} dB", image_quality.psnr);
+        println!("  SSIM: {:.4}", image_quality.ssim);
+    }
+}
+
+/// Export conversion results to a detailed text file
+///
+/// # Arguments
+///
+/// * `metrics` - Vector of conversion metrics for all models
+/// * `input_model_type` - Type of input model
+///
+/// # Returns
+///
+/// * `Result<(), UtilError>` - Success or error
+pub fn export_conversion_results(
+    metrics: &[ConversionMetrics],
+    input_model_type: &str,
+) -> Result<(), UtilError> {
+    ensure_output_dir()?;
+
+    let report_filename = format!(
+        "output/camera_conversion_results_{}.txt",
+        input_model_type.to_lowercase()
+    );
+    let mut report_file = File::create(&report_filename)
+        .map_err(|e| UtilError::NumericalError(format!("Failed to create report file: {e}")))?;
+
+    writeln!(
+        report_file,
+        "FISHEYE CAMERA MODEL CONVERSION ANALYSIS REPORT - RUST IMPLEMENTATION"
+    )?;
+    writeln!(
+        report_file,
+        "====================================================================="
+    )?;
+    writeln!(report_file)?;
+    writeln!(
+        report_file,
+        "INPUT MODEL TYPE: {}",
+        input_model_type.to_uppercase()
+    )?;
+    writeln!(report_file, "OPTIMIZATION FRAMEWORK: tiny-solver")?;
+    writeln!(report_file, "ALGORITHM: Levenberg-Marquardt")?;
+    writeln!(report_file)?;
+
+    if metrics.is_empty() {
+        writeln!(report_file, "❌ No conversions performed (input model type not supported for conversion or no target models available)")?;
+        return Ok(());
+    }
+
+    // Export detailed results table
+    writeln!(report_file, "CONVERSION RESULTS TABLE")?;
+    writeln!(report_file, "========================")?;
+    writeln!(
+        report_file,
+        "{:<32} | {:>15} | {:>15} | {:>13} | {:>15}",
+        "Target Model", "Final Error", "Improvement", "Time (ms)", "Convergence"
+    )?;
+    writeln!(
+        report_file,
+        "{:<32} | {:>15} | {:>15} | {:>13} | {:>15}",
+        "", "(pixels)", "(pixels)", "", "Status"
+    )?;
+    writeln!(
+        report_file,
+        "{:-<32}-+-{:-<15}-+-{:-<15}-+-{:-<13}-+-{:-<15}",
+        "", "", "", "", ""
+    )?;
+
+    for metric in metrics {
+        let improvement =
+            metric.initial_reprojection_error.mean - metric.final_reprojection_error.mean;
+        writeln!(
+            report_file,
+            "{:<32} | {:>13.6}   | {:>13.6}   | {:>11.2}   | {:<15}",
+            metric.model_name,
+            metric.final_reprojection_error.mean,
+            improvement,
+            metric.optimization_time_ms,
+            metric.convergence_status
+        )?;
+    }
+    writeln!(report_file)?;
+
+    // Performance analysis
+    writeln!(report_file, "PERFORMANCE ANALYSIS")?;
+    writeln!(report_file, "====================")?;
+
+    let best_accuracy = metrics.iter().min_by(|a, b| {
+        a.final_reprojection_error
+            .mean
+            .partial_cmp(&b.final_reprojection_error.mean)
+            .unwrap()
+    });
+    let fastest_conversion = metrics.iter().min_by(|a, b| {
+        a.optimization_time_ms
+            .partial_cmp(&b.optimization_time_ms)
+            .unwrap()
+    });
+
+    if let Some(best) = best_accuracy {
+        writeln!(
+            report_file,
+            "🏆 Best Accuracy: {} ({:.6} pixels)",
+            best.model_name, best.final_reprojection_error.mean
+        )?;
+    }
+    if let Some(fastest) = fastest_conversion {
+        writeln!(
+            report_file,
+            "⚡ Fastest Conversion: {} ({:.2} ms)",
+            fastest.model_name, fastest.optimization_time_ms
+        )?;
+    }
+
+    let avg_error = metrics
+        .iter()
+        .map(|m| m.final_reprojection_error.mean)
+        .sum::<f64>()
+        / metrics.len() as f64;
+    let avg_time =
+        metrics.iter().map(|m| m.optimization_time_ms).sum::<f64>() / metrics.len() as f64;
+
+    writeln!(
+        report_file,
+        "📊 Average Reprojection Error: {:.6} pixels",
+        avg_error
+    )?;
+    writeln!(
+        report_file,
+        "📊 Average Optimization Time: {:.2} ms",
+        avg_time
+    )?;
+    writeln!(report_file)?;
+
+    // Detailed metrics for each model
+    writeln!(report_file, "DETAILED MODEL RESULTS")?;
+    writeln!(report_file, "======================")?;
+
+    for metric in metrics {
+        writeln!(report_file, "\n{} MODEL:", metric.model_name.to_uppercase())?;
+        writeln!(report_file, "{}", "-".repeat(metric.model_name.len() + 7))?;
+        writeln!(report_file, "Final Parameters: {:?}", metric.model)?;
+        writeln!(
+            report_file,
+            "Optimization Time: {:.2} ms",
+            metric.optimization_time_ms
+        )?;
+        writeln!(
+            report_file,
+            "Convergence Status: {}",
+            metric.convergence_status
+        )?;
+
+        writeln!(report_file, "\nReprojection Error Statistics:")?;
+        writeln!(
+            report_file,
+            "  Mean: {:.8} px",
+            metric.final_reprojection_error.mean
+        )?;
+        writeln!(
+            report_file,
+            "  RMSE: {:.8} px",
+            metric.final_reprojection_error.rmse
+        )?;
+        writeln!(
+            report_file,
+            "  Min: {:.8} px",
+            metric.final_reprojection_error.min
+        )?;
+        writeln!(
+            report_file,
+            "  Max: {:.8} px",
+            metric.final_reprojection_error.max
+        )?;
+        writeln!(
+            report_file,
+            "  Std Dev: {:.8} px",
+            metric.final_reprojection_error.stddev
+        )?;
+        writeln!(
+            report_file,
+            "  Median: {:.8} px",
+            metric.final_reprojection_error.median
+        )?;
+
+        writeln!(report_file, "\nConversion Accuracy:")?;
+        let validation = &metric.validation_results;
+        writeln!(
+            report_file,
+            "  Average Error: {:.4} px",
+            validation.average_error
+        )?;
+        writeln!(report_file, "  Max Error: {:.4} px", validation.max_error)?;
+        writeln!(report_file, "  Status: {}", validation.status)?;
+
+        if let Some(ref image_quality) = metric.image_quality {
+            writeln!(report_file, "\nImage Quality Assessment:")?;
+            writeln!(report_file, "  PSNR: {:.2} dB", image_quality.psnr)?;
+            writeln!(report_file, "  SSIM: {:.4}", image_quality.ssim)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Display results summary table and analysis
@@ -996,12 +1553,16 @@ pub fn display_results_summary(metrics: &[ConversionMetrics], input_model_type: 
     println!("\n💾 Step 6: Exporting Results");
     println!("============================");
 
-    // Use util module to export the analysis
-    let report_filename = format!(
-        "camera_conversion_results_{}.txt",
-        input_model_type.to_lowercase()
-    );
-    println!("📄 Results exported to: {report_filename}");
+    // Export detailed analysis report
+    if let Err(e) = export_conversion_results(metrics, input_model_type) {
+        println!("⚠️  Failed to export results: {e}");
+    } else {
+        let report_filename = format!(
+            "output/camera_conversion_results_{}.txt",
+            input_model_type.to_lowercase()
+        );
+        println!("📄 Results exported to: {report_filename}");
+    }
 }
 
 impl From<std::io::Error> for UtilError {
