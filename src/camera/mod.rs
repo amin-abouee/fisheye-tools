@@ -223,6 +223,14 @@ pub trait CameraModel {
     /// # Returns
     /// A `Vec<f64>` containing the distortion coefficients.
     fn get_distortion(&self) -> Vec<f64>;
+
+    /// Returns the name of the camera model.
+    ///
+    /// This method returns a string identifier for the specific camera model type.
+    ///
+    /// # Returns
+    /// A `&'static str` containing the name of the camera model (e.g., "double sphere", "eucm", etc.).
+    fn get_model_name(&self) -> &'static str;
 }
 
 /// Provides common validation functions for camera parameters.
@@ -253,5 +261,48 @@ pub mod validation {
             return Err(CameraModelError::PrincipalPointMustBeFinite);
         }
         Ok(())
+    }
+}
+
+/// Contains unit tests for the camera module.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nalgebra::DVector;
+
+    #[test]
+    fn test_camera_model_names() {
+        // Test Double Sphere model name
+        let ds_params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.58, -0.18]);
+        let ds_model = double_sphere::DoubleSphereModel::new(&ds_params).unwrap();
+        assert_eq!(ds_model.get_model_name(), "double_sphere");
+
+        // Test EUCM model name
+        let eucm_params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 1.0, 0.5]);
+        let eucm_model = eucm::EucmModel::new(&eucm_params).unwrap();
+        assert_eq!(eucm_model.get_model_name(), "eucm");
+
+        // Test Kannala-Brandt model name
+        let kb_params =
+            DVector::from_vec(vec![460.0, 460.0, 320.0, 240.0, -0.01, 0.05, -0.08, 0.04]);
+        let kb_model = kannala_brandt::KannalaBrandtModel::new(&kb_params).unwrap();
+        assert_eq!(kb_model.get_model_name(), "kannala_brandt");
+
+        // Test Pinhole model name
+        let pinhole_params = DVector::from_vec(vec![460.0, 460.0, 320.0, 240.0]);
+        let pinhole_model = pinhole::PinholeModel::new(&pinhole_params).unwrap();
+        assert_eq!(pinhole_model.get_model_name(), "pinhole");
+
+        // Test RadTan model name
+        let radtan_params = DVector::from_vec(vec![
+            460.0, 460.0, 320.0, 240.0, -0.28, 0.07, 0.0002, 0.00002, 0.0,
+        ]);
+        let radtan_model = rad_tan::RadTanModel::new(&radtan_params).unwrap();
+        assert_eq!(radtan_model.get_model_name(), "rad_tan");
+
+        // Test UCM model name
+        let ucm_params = DVector::from_vec(vec![350.0, 350.0, 320.0, 240.0, 0.8]);
+        let ucm_model = ucm::UcmModel::new(&ucm_params).unwrap();
+        assert_eq!(ucm_model.get_model_name(), "ucm");
     }
 }

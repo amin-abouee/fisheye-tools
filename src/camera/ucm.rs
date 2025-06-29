@@ -501,6 +501,15 @@ impl CameraModel for UcmModel {
     fn get_distortion(&self) -> Vec<f64> {
         vec![self.alpha]
     }
+
+    /// Returns the name of the Unified Camera Model.
+    ///
+    /// # Return Value
+    ///
+    /// A `&'static str` containing "ucm".
+    fn get_model_name(&self) -> &'static str {
+        "ucm"
+    }
 }
 
 /// Unit tests for the [`UcmModel`].

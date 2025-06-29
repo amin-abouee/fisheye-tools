@@ -679,6 +679,14 @@ impl CameraModel for RadTanModel {
         self.distortions.to_vec()
     }
 
+    /// Returns the name of the Radial-Tangential camera model.
+    ///
+    /// # Return Value
+    /// A `&'static str` containing "rad tan".
+    fn get_model_name(&self) -> &'static str {
+        "rad_tan"
+    }
+
     // linear_estimation removed from impl CameraModel for RadTanModel
     // optimize removed from impl CameraModel for RadTanModel
 }

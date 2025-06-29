@@ -693,6 +693,14 @@ impl CameraModel for KannalaBrandtModel {
         self.distortions.to_vec()
     }
 
+    /// Returns the name of the Kannala-Brandt camera model.
+    ///
+    /// # Return Value
+    /// A `&'static str` containing "kannala brandt".
+    fn get_model_name(&self) -> &'static str {
+        "kannala_brandt"
+    }
+
     // linear_estimation removed from impl CameraModel for KannalaBrandtModel
     // optimize removed from impl CameraModel for KannalaBrandtModel
 }

@@ -425,6 +425,14 @@ impl CameraModel for PinholeModel {
         vec![] // Pinhole model has no distortion parameters
     }
 
+    /// Returns the name of the Pinhole camera model.
+    ///
+    /// # Return Value
+    /// A `&'static str` containing "pinhole".
+    fn get_model_name(&self) -> &'static str {
+        "pinhole"
+    }
+
     // linear_estimation removed from impl CameraModel for PinholeModel
     // optimize removed from impl CameraModel for PinholeModel
 }

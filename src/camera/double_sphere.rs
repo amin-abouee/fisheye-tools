@@ -642,6 +642,15 @@ impl CameraModel for DoubleSphereModel {
         vec![self.alpha, self.xi] // Order: xi, then alpha
     }
 
+    /// Returns the name of the Double Sphere camera model.
+    ///
+    /// # Return Value
+    ///
+    /// A `&'static str` containing "double sphere".
+    fn get_model_name(&self) -> &'static str {
+        "double_sphere"
+    }
+
     // linear_estimation removed from impl CameraModel for DoubleSphereModel
     // optimize removed from impl CameraModel for DoubleSphereModel
 }
